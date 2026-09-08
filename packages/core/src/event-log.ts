@@ -35,7 +35,12 @@ export interface EventLogQueryOptions {
    * against `data.thread === 'chan:<channel>'`). The special value
    * `'general'` includes the implicit-broadcast variant — messages
    * with `to === null` whose `data.thread` is unset OR explicitly
-   * `'chan:general'`. Mutually exclusive with `with`.
+   * `'chan:general'` — and, because that shape is also how an
+   * untagged recipient-list push persists, applies `feedVisibleTo` to
+   * what it collects: `viewer` sees the general channel's broadcasts
+   * plus only those scoped rows it was actually sent. A named channel
+   * is not audience-filtered; membership is the read gate there.
+   * Mutually exclusive with `with`.
    */
   channel?: string;
   /** Hard upper bound on rows returned. Defaults to 100, max 1000. */
@@ -127,8 +132,19 @@ export function objectiveThreadTag(objectiveId: string): string {
   return `${OBJECTIVE_THREAD_PREFIX}${objectiveId}`;
 }
 
-/** Recipient-list events that predate the thread-tag convention. */
-const SCOPED_UNTHREADED_KINDS: ReadonlySet<string> = new Set(['instructions', 'context_control']);
+/**
+ * Recipient-list events that predate the thread-tag convention.
+ *
+ * `SqliteEventLog` builds the SQL half of this set from this constant, so the
+ * two cannot fork. `environment` is deliberately absent: that kind landed after
+ * the `recipients` column, so no environment row without an audience has ever
+ * existed and adding it here would only withhold rows that carry their own
+ * answer.
+ */
+export const SCOPED_UNTHREADED_KINDS: ReadonlySet<string> = new Set([
+  'instructions',
+  'context_control',
+]);
 
 /**
  * True when a thread tag names an audience narrower than the team.
@@ -225,12 +241,20 @@ export function clampQueryLimit(raw: number | undefined): number {
 }
 
 /**
- * Is `ev` part of `viewer`'s default feed?
+ * Is `ev` visible to `viewer`?
  *
  * THE RULE, stated once. `SqliteEventLog`'s feed statement is the same
  * predicate in SQL and the two must move together — a test in each
  * asserts the same scoping, and `event-log-scope.test.ts` runs the
  * shared cases against both.
+ *
+ * It governs two reads: the default feed, and the general channel.
+ * General-channel membership is implicit (everyone), so read access
+ * gates nothing there and a row's recorded audience is the only
+ * audience it has — see `matchesChannel` and the general-channel
+ * branch of `query`. A named channel is different on purpose: joining
+ * one is read access to its history, so `?channel=<named>` does not
+ * consult this rule (docs/concepts/channels.mdx).
  *
  *   1. Secret lifecycle events are never in anyone's feed. Unchanged,
  *      and deliberately unconditional — `GET /secrets` is the surface
@@ -295,6 +319,18 @@ export class InMemoryEventLog implements EventLog {
       if (options.before !== undefined && ev.ts >= options.before) continue;
       if (options.channel !== undefined) {
         if (!matchesChannel(ev, options.channel)) continue;
+        // The general channel collects untagged broadcasts, and a
+        // recipient-list push with no thread tag has that same shape.
+        // Its membership is implicit, so there is no read access to
+        // gate on and the recorded delivery audience is the only
+        // audience the row has. A named channel is deliberately
+        // retro-readable and is not filtered here.
+        if (
+          options.channel === GENERAL_CHANNEL_ID &&
+          !feedVisibleTo(ev, entry.recipients, options.viewer)
+        ) {
+          continue;
+        }
       } else if (!matchesViewer(ev, entry.recipients, options.viewer, options.with)) {
         continue;
       }

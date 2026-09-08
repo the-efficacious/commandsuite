@@ -1109,6 +1109,11 @@ describe('channels_post handler', () => {
 // ─── recent (extended with channel arg) ─────────────────────────────
 
 describe('recent handler — channel arg', () => {
+  // The description advertises this number; `DEFAULT_RECENT_LIMIT` is
+  // module-private, and the description assertion below pins the two
+  // spellings to each other.
+  const DEFAULT_RECENT_LIMIT = 50;
+
   it('resolves slug → id and queries history({channel: id})', async () => {
     const history = vi.fn(async () => [] as Message[]);
     const broker = makeBroker({
@@ -1121,9 +1126,43 @@ describe('recent handler — channel arg', () => {
       history,
     });
     await handleToolCall('recent', { channel: 'engineering' }, broker, PACKET);
-    expect(history).toHaveBeenCalledWith(expect.objectContaining({ channel: 'eng-id-123' }));
-    // `with` should NOT be set — channel + with are mutually exclusive.
-    expect(history).toHaveBeenCalledWith(expect.not.objectContaining({ with: expect.anything() }));
+    // The whole query, not a fragment of it: a channel-scoped call
+    // carries the resolved id, the limit, and no `with`.
+    expect(history).toHaveBeenCalledWith({ channel: 'eng-id-123', limit: DEFAULT_RECENT_LIMIT });
+  });
+
+  it('asks for the general channel when no scope arg is given', async () => {
+    const history = vi.fn(async () => [] as Message[]);
+    await handleToolCall('recent', {}, makeBroker({ history }), PACKET);
+    // The whole query object. `{ limit }` alone takes the broker's
+    // default-feed branch — the agent's own inbox across every thread
+    // — which is not what this tool says it returns.
+    expect(history).toHaveBeenCalledWith({ channel: 'general', limit: DEFAULT_RECENT_LIMIT });
+  });
+
+  it('keeps an explicit limit on the unscoped call', async () => {
+    const history = vi.fn(async () => [] as Message[]);
+    await handleToolCall('recent', { limit: 5 }, makeBroker({ history }), PACKET);
+    expect(history).toHaveBeenCalledWith({ channel: 'general', limit: 5 });
+  });
+
+  it('leaves a DM-scoped call unscoped by channel', async () => {
+    const history = vi.fn(async () => [] as Message[]);
+    await handleToolCall('recent', { with: 'director' }, makeBroker({ history }), PACKET);
+    // No `channel` key at all — `with` and `channel` are mutually
+    // exclusive on the wire, and the default must not leak into it.
+    expect(history).toHaveBeenCalledWith({ with: 'director', limit: DEFAULT_RECENT_LIMIT });
+  });
+
+  it('says in its description what the handler asks for', async () => {
+    const recent = defineTools(PACKET).find((t) => t.name === 'recent');
+    // The description is the agent's only spec for this surface, so it
+    // and the handler have to name the same default scope and the same
+    // default limit.
+    expect(recent?.description).toMatch(/no scope arg for the general team channel/);
+    expect(recent?.description).toMatch(
+      new RegExp(`up to ${DEFAULT_RECENT_LIMIT} by default`, 'i'),
+    );
   });
 
   it('rejects passing both `with` and `channel`', async () => {

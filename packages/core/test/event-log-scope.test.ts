@@ -14,7 +14,12 @@
 import { DatabaseSync } from 'node:sqlite';
 import type { Message } from 'csuite-sdk/types';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { channelThreadTag, type EventLog, InMemoryEventLog } from '../src/event-log.js';
+import {
+  channelThreadTag,
+  type EventLog,
+  GENERAL_CHANNEL_ID,
+  InMemoryEventLog,
+} from '../src/event-log.js';
 import type { SqlDriver } from '../src/sql-driver.js';
 import { SqliteEventLog } from '../src/sqlite-event-log.js';
 
@@ -172,6 +177,115 @@ for (const impl of IMPLEMENTATIONS) {
       );
       expect(await idsFor('alice')).toEqual([]);
       expect(await idsFor('bob')).toEqual([]);
+    });
+  });
+
+  describe(`general-channel scope — ${impl.name}`, () => {
+    // `?channel=general` collects untagged broadcasts, and an untagged
+    // recipient-list push has exactly that shape. General membership is
+    // implicit, so nothing else gates the read: the recorded audience
+    // has to.
+    let log: EventLog;
+    beforeEach(() => {
+      log = impl.make();
+    });
+
+    const generalIdsFor = async (viewer: string): Promise<string[]> =>
+      (await log.query({ viewer, channel: GENERAL_CHANNEL_ID })).map((m) => m.id).sort();
+
+    /** The three untagged recipient-list families, plus real general content. */
+    const seedMixedGeneral = async (): Promise<void> => {
+      await log.append(
+        msg({
+          id: 'instr',
+          ts: 1,
+          from: 'csuite',
+          data: { kind: 'instructions', actor: 'admin', affected: ['bob'] },
+        }),
+        { recipients: ['bob'] },
+      );
+      await log.append(
+        msg({
+          id: 'ctl',
+          ts: 2,
+          from: 'csuite',
+          data: { kind: 'context_control', verb: 'clear', target: 'bob', reason: 'private' },
+        }),
+        { recipients: ['bob'] },
+      );
+      await log.append(
+        msg({
+          id: 'env',
+          ts: 3,
+          from: 'csuite',
+          data: { kind: 'environment', action: 'value_set', envName: 'DEPLOY_KEY' },
+        }),
+        { recipients: ['bob'] },
+      );
+      await log.append(msg({ id: 'broadcast', ts: 4, from: 'alice' }));
+      await log.append(
+        msg({ id: 'tagged', ts: 5, from: 'alice', data: { thread: channelThreadTag('general') } }),
+      );
+    };
+
+    it('gives a non-recipient the general channel and nothing else', async () => {
+      await seedMixedGeneral();
+      // Exactly the two rows that were broadcast. Not 'instr', 'ctl'
+      // or 'env' — carol was not sent any of them — and not fewer
+      // than two either.
+      expect(await generalIdsFor('carol')).toEqual(['broadcast', 'tagged']);
+    });
+
+    it('still gives a recipient every notice it was sent', async () => {
+      await seedMixedGeneral();
+      // The fix must not cost bob the notices addressed to bob.
+      expect(await generalIdsFor('bob')).toEqual(['broadcast', 'ctl', 'env', 'instr', 'tagged']);
+    });
+
+    it('still gives the sender its own scoped rows', async () => {
+      await seedMixedGeneral();
+      expect(await generalIdsFor('csuite')).toEqual(['broadcast', 'ctl', 'env', 'instr', 'tagged']);
+    });
+
+    it('withholds a legacy untagged notice that cannot say who it was for', async () => {
+      await log.append(
+        msg({ id: 'legacy-instr', ts: 1, from: 'csuite', data: { kind: 'instructions' } }),
+      );
+      await log.append(
+        msg({ id: 'legacy-ctl', ts: 2, from: 'csuite', data: { kind: 'context_control' } }),
+      );
+      await log.append(msg({ id: 'broadcast', ts: 3, from: 'alice' }));
+      expect(await generalIdsFor('carol')).toEqual(['broadcast']);
+      expect(await generalIdsFor('csuite')).toEqual(['broadcast', 'legacy-ctl', 'legacy-instr']);
+    });
+
+    it('keeps DMs and scoped threads out of general for both ends', async () => {
+      await log.append(msg({ id: 'dm', ts: 1, from: 'alice', to: 'bob' }));
+      await log.append(
+        msg({ id: 'room', ts: 2, from: 'alice', data: { thread: channelThreadTag('room') } }),
+        { recipients: ['alice', 'bob'] },
+      );
+      await log.append(msg({ id: 'broadcast', ts: 3, from: 'alice' }));
+      expect(await generalIdsFor('bob')).toEqual(['broadcast']);
+      expect(await generalIdsFor('alice')).toEqual(['broadcast']);
+    });
+
+    it('leaves a named channel readable back by a member who was not a recipient', async () => {
+      // The other half of the rule: a named channel has a membership
+      // to gate on, and joining it is read access to its history
+      // (docs/concepts/channels.mdx). Only general is audience-filtered.
+      await log.append(
+        msg({ id: 'before', ts: 1, from: 'alice', data: { thread: channelThreadTag('backlog') } }),
+        { recipients: ['alice'] },
+      );
+      await log.append(
+        msg({ id: 'after', ts: 2, from: 'alice', data: { thread: channelThreadTag('backlog') } }),
+        { recipients: ['alice', 'carol'] },
+      );
+      const ids = (await log.query({ viewer: 'carol', channel: 'backlog' }))
+        .map((m) => m.id)
+        .sort();
+      expect(ids).toEqual(['after', 'before']);
     });
   });
 }
