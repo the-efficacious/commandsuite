@@ -106,6 +106,39 @@ the wire alone. The half-rename is stable, and it is what keeps the four-way
 stream. The thing this repository should not do is drip-rename it. Either answer
 closes the homonym; only one of them closes it this year.
 
+**Decided, and done.** Executed in `6a2f878` (the wire) and `4d20427` (the
+runner, the shell and the docs), with the prose sweep in `cfb739b`. The wire says
+`POST /presence/work-state`, `Presence.workState`,
+`RosterResponse.workStateWindowMs` and `WorkStateReport`; the `Busy*` aliases are
+deleted outright, because every consumer was inside `packages/cli` and there was
+nothing outside the package to keep them for.
+
+**Nothing broke on the way in.** For one release the broker serves both paths
+from a single handler — not two, which is the cheap version that drifts — and the
+roster emits both spellings of each renamed field with the same value. The
+deprecated route answers `Deprecation: true` and
+`Link: </presence/work-state>; rel="successor-version"`, and writes one
+`deprecated route` warn line naming the member
+(`packages/core/src/app.ts:1597-1614`), so a client still on the old spelling is
+*findable* rather than merely broken later. `Client.setActivity`, `ActivityReport`
+and `ActivityReportSchema` survive as deprecated aliases so an external TypeScript
+consumer keeps compiling; `setActivity` posts to the **new** path
+(`packages/sdk/src/client.ts:1795`), so no first-party caller can keep the old
+route warm by keeping the old method.
+
+**The removal condition is one release.** The next minor drops the
+`/presence/activity` route, `Presence.activity`, `RosterResponse.activityWindowMs`,
+and the four SDK aliases. `Presence.busy` is not on that list: it is not a D6 shim
+but the older lossy boolean, and it stays, now labeled as what it is — it cannot
+express `blocked`, so a reader that takes it as the whole signal loses the one
+state that asks a human to look.
+
+**What this bought.** `activity` now names one thing. The durable stream keeps the
+word — `GET /members/:name/activity`, `activity.read`, `ActivityStore` were never
+wrong and were not touched — and the live signal is *work state* at every layer
+that speaks it, including the runner's own files. The reserved-word entry for
+**activity** can be closed when the shims go.
+
 ### D42 — MCP tool renames: the high-severity set only, behind one alias window, with the SDK as arbiter. **proposed**
 
 **Decided.** Rename the tools whose verbs are actively misleading, not all
@@ -146,6 +179,36 @@ adopt it. Direction must be in the name because today it is nowhere: the same
 and gen-AI, and a client that reuses the activity paging loop against
 `/telemetry` never terminates. That is not a naming preference; it is a
 non-terminating loop.
+
+**Decided, and done.** Executed on `feat/ontology-t12-cursors`, commit `c555f46`
+(2026-09-08). The composite cursor is `before_ts`/`before_id` on the newest-first
+reads and `after_ts`/`after_id` on the oldest-first ones; `stalledMs`,
+`clientKind`, `clientVersion` and `parentOrigin` become `stalled_ms`,
+`client_kind`, `client_version` and `parent_origin`; the delivery receipts' scalar
+`before` becomes `before_ts`. Neither store's direction changed — both were right,
+and the audit's own recommendation was explicit that they must not be unified.
+`docs/dev/rest-api.mdx` gains a "Query parameters and cursors" section and loses
+the claim, at the telemetry endpoint, that the two directions shared one cursor;
+that sentence was the load-bearing error, because it is what a client author reads
+before writing the loop that never terminates.
+
+Each retired spelling is accepted for one release, loses to the current name when
+both arrive, and answers with `Deprecation: true` plus
+`X-CSuite-Deprecated-Query: <legacy>=<current>` — the response body is
+byte-identical either way, and a warn line per stale request makes the remaining
+callers findable from the operator's side as well as the caller's. **Removal
+condition: the next minor after the release carrying `c555f46`.** Deleting them is
+one edit to the rename tables in `packages/core/src/app.ts:548-592` and one to the
+`legacy` lists in `packages/core/test/query-parameter-census.test.ts`, which pins
+the seven names as a set precisely so the removal is a single visible change
+rather than a hunt.
+
+Rows #292, #294 and #295 were read and deliberately not executed: `mime`, `kind`
+and `event` already satisfy the snake_case rule, and their proposed renames
+(`mime_type`, `side`, `record_name`) are separate undecided recommendations. Row
+#258's parenthetical — rename the time window to `after_ts`/`before_ts` if #255
+lands — is now unusable, since those are the cursor's names; `start_ts`/`end_ts`
+is the only remaining option there.
 
 ### D34 — US spelling is house style. **proposed**
 
@@ -245,32 +308,482 @@ them, and an ontology session that tries will produce entries that describe
 behaviour nobody agreed to.
 
 They are listed here so that they are not mistaken for vocabulary work and
-quietly decided by a rename. Nine of them block a defect fix, marked ▸.
+quietly decided by a rename. Nine of them blocked a defect fix, marked ▸ below.
+
+Eleven have since been answered by the maintainer, who holds the product context
+the audit does not, and each answer has been executed on this branch. They keep
+their numbers and are written out below with the option not taken; the eleven
+still open follow in a table. Each is **proposed**: the maintainer directed it and
+the change shipped with tests, but no second reader has verified the record, which
+is what ratification means here.
+
+### D3 ▸ — `members.manage` is on every objective's thread, reads included. **proposed**
+
+**Decided.** The read gate widens to the thread audience. `GET /objectives/:id`
+and `GET /objectives` admit the assignee, originator, watchers,
+`objectives.create` holders **and** `members.manage` holders — the audience the
+push fan-out (`packages/core/src/app.ts:4468-4488`) and
+`POST /objectives/:id/discuss` (`:4960-4966`) already admitted. One predicate,
+`onObjectiveThread` (`:4448-4452`), states the rule; the fan-out expands it and
+both read routes ask it, so the four surfaces cannot drift apart again. Executed
+in `5bba6d6`.
+
+**Rejected:** narrowing the push and post paths to the objective party. It is a
+live behavior removal — a coordinator pinged on every objective today stops being
+pinged — it contradicts the code's own stated intent
+(`packages/core/src/app.ts:4437-4438`, "implicit thread participants on every
+objective"), it falsifies three doc sentences including one written into the
+canonical permission table two days earlier (`docs/concepts/permissions.mdx:26`),
+and it drags `/team/status` and the `team_status` MCP tool
+(`packages/cli/src/runtime/tools.ts:166`) in with it. Also rejected: keeping both
+sets and only rewording the error. A member who is pushed an event, can reply to
+it, and holds its id from `/team/status` but 403s on the object will be
+re-reported as a bug whatever the string says.
+
+**Why.** Withholding the GET disclosed nothing: the push body is composed from the
+objective (`systemMessageForEvent`), and every open objective's id, title and
+status already reached the same member through `GET /team/status`
+(`packages/core/src/team-status.ts:59-78`). The old message — `not a thread
+participant; viewing requires objectives.create` — was false twice, denying thread
+membership to a thread member and naming the objective-*authoring* leaf as the
+remedy for a read. Register #24.
+
+### D4 ▸ — The unscoped `recent` is the general channel. **proposed**
+
+**Decided.** `handleRecent` passes `channel: general` when neither `with` nor
+`channel` is given (`packages/cli/src/runtime/tools.ts:2502-2510`). The tool
+description, the empty state, the result header and `docs/concepts/events.mdx` all
+said this already; the handler now does it. Executed in `079b215`.
+
+**Rejected:** renaming the mode to "your feed" and teaching `formatRecentLine` a
+thread label. It keeps what the broker has always returned to this call, but it
+makes the agent's default read its own inbox — four conversations interleaved —
+and the tool description is the only specification a model reads before calling.
+Naming the mixed feed truthfully still leaves an agent asked to summarize team chat
+summarizing private-channel and objective-thread content into `#general`.
+
+**Why.** `history({limit})` with no channel took the broker's default-feed branch,
+and `formatRecentLine` never renders `data.thread`
+(`packages/cli/src/runtime/tools.ts:4415`), so a DM, a private-channel post, an
+objective post and a broadcast arrived as identical lines under a header reading
+`recent <Team> team chat`. This lands **after** D5: routing every agent's default
+read through the general query before that fix would have handed each agent the
+instruction, context-control and environment notices of every other member.
+Register #31.
+
+### D5 ▸ — For `?channel=general`, the recorded delivery audience wins. **proposed**
+
+**Decided.** It is a defect, and the fix is in the query. Instruction-change
+(`packages/core/src/app.ts:1021-1033`), context-control and runner-environment
+pushes deliver to a named recipient list but persist with `to: NULL` and no thread
+tag — the shape `queryGeneralStmt` collected as general-channel content while
+naming neither the viewer nor `recipients`. Both logs now apply `feedVisibleTo` to
+the general read (`packages/core/src/event-log.ts:331`,
+`packages/core/src/sqlite-event-log.ts:242-262`), so one audience rule answers the
+feed and the general channel. Executed in `0d057a7`.
+
+**Rejected:** tagging the three families out of general. It fixes only the families
+known today — the next untagged recipient-list push reopens the hole — and it
+routes around the rule question instead of answering it. Also rejected: accepting
+it as designed. The notices name who edited whose instructions, the free-text
+reason typed when clearing someone's context, and the `envName` of a secret
+binding; that is transparency on a small trusted team and disclosure on a team
+with guests, and the operator cannot tell which they have from the code.
+
+**Why.** The repo already stated the intended rule and stated it as a warning:
+`feedVisibleTo`'s fail-closed clause for pre-`recipients` rows exists precisely to
+stop untagged scoped rows becoming broadcasts forever — the same class of bug,
+caught for legacy rows and missed for live ones. Two constraints held: universal
+readability of `general` is untouched, and `'environment'` was **not** added to
+`SCOPED_UNTHREADED_KINDS` (`packages/core/src/event-log.ts:204`) — that kind
+landed after the `recipients` column, so no environment row without an audience
+has ever existed. Named channels keep their audience-blind query: joining one is
+read access to its history (`docs/concepts/channels.mdx:10-12`). Register #30.
+
+### D9 ▸ — `/roster` and `/team/status` owe the same `Presence`. **proposed**
+
+**Decided.** One shape, one population. The enrichment moves out of the
+`GET /roster` handler into `enrichPresence`
+(`packages/core/src/presence-enrichment.ts:63`) and both routes call it;
+`ComposeTeamStatusOptions` gains `workState` — required, not optional
+(`packages/core/src/team-status.ts:28`) — plus the optional `captureHealth` and
+`diagnostics` the broker itself treats as optional. Executed in `10975c3`.
+
+**Rejected:** splitting the type — keeping `Presence` as the registry-level record
+and adding `RosterPresence extends Presence` for the five enriched axes, with
+`TeamStatusMember.presence` typed to the narrow one. Also rejected: doing both.
+
+**Why.** The split is the honest answer to a shape that had genuinely drifted, and
+it would have turned a runtime surprise into a compile-time fact. It also makes
+the wrong thing permanent. `/team/status` is the operability report — the surface
+an operator opens when something is wrong, and the surface
+`csuite team status --json` and the MCP `team_status` tool hand to a human and an
+agent verbatim — so it is the one place a silent capture gap matters most.
+Encoding "this report cannot tell you about capture health" into the type system
+is a decision to keep a hole and give it a name.
+
+**What made it a contract violation rather than a gap.** Two of the five fields
+make absence load-bearing and say so in their own doc comments: `captureHealth`
+absent means "this broker has no opinion" and *explicitly not* "healthy"
+(`packages/sdk/src/types.ts:305-321`), `diagnosticsUnresolved` absent means "this
+broker retains no diagnostics" and *explicitly not* "this member is clean"
+(`:322-336`). `composeTeamStatus` forwarded `broker.listPresences()` untouched,
+and `Registry.list` never sets any of the five
+(`packages/core/src/registry.ts:107`), so a broker answering `gap` on `/roster`
+was reporting itself too old to know on `/team/status`, for the same member on the
+same tick.
+
+**The evidence that the intersection was an accident, not a contract.** `TeamHome`
+already fetched both endpoints and mixed their presences into one row
+(`packages/web-ui/src/components/TeamHome.tsx:124-139`), and
+`csuite team status` read only intersection fields
+(`packages/cli/src/commands/team.ts:87-113`) with nothing preventing the next line
+added there from reaching for `captureHealth` and silently getting nothing.
+
+**The cost, stated.** `composeTeamStatus` is no longer composable from the broker
+alone: its own unit fixture had to grow a `workState`. That is the point — a caller
+that forgets it now fails to compile rather than emitting a `Presence` whose absent
+`activity` reads as "idle" for a member the runner has reported blocked.
+`/team/status` also gets slightly more expensive per member
+(`captureHealth.forMember` and `diagnostics.unresolved` per row); if it is ever
+polled on a tight interval, that is the thing to look at first.
+
+Register #37 unblocks. Held by `apps/server/test/presence-shape-parity.test.ts`,
+which compares the two objects with `toEqual` and pins the exact key set on
+**both** routes.
+
+### D11 — Preset system: read-only compatibility, never re-opened. **proposed**
+
+**Decided.** `TeamStore.setPreset`, `TeamStore.deletePreset` and
+`TeamStore.membersReferencingPreset` are deleted along with their prepared
+statements. `getPresets()` (`packages/core/src/team-store.ts:262`) and the preset
+branch of `resolvePermissions` (`packages/core/src/members-domain.ts:196`) stay:
+together they are the only reason a database written before the flat leaf model
+loads. The test double loses the same three methods, and `seedStores` seeds a
+legacy preset as a direct `INSERT` — the row an old broker actually left — rather
+than through an API the product no longer has. The four false claims are
+corrected: the `POST /members` comment, `docs/dev/rest-api.mdx` on the instructions
+packet and on `permissions`, and the SDK client's `getInstructions` doc.
+`GET /team`'s row says the deprecated field is not sent (#169), and
+`Team.permissionPresets`'s `@deprecated` note gains "no current server writes one".
+Executed in `16838b3`.
+
+**Rejected:** re-opening the feature — loosening `MemberPermissionListSchema`,
+building `GET/PUT/DELETE /team/presets`, restoring `permissionPresets` to
+`TeamSchema`. That is a new feature wearing an old feature's clothes; it costs a
+wire addition, a new authority question (does `team.manage` or `members.manage`
+gate preset editing?), and re-introduces the indirection that makes a member's
+effective permissions non-obvious in the UI.
+
+**Why.** The evidence is one-sided. Every write path was callerless in production —
+the only callers were the in-memory test double and its seeder — there is no REST
+route, CLI command or MCP tool, and the wire rejects a preset name by construction,
+since `MemberPermissionListSchema` resolves to
+`z.array(z.enum(PERMISSIONS))` behind the legacy-alias preprocessor
+(`packages/sdk/src/schemas.ts:68,77-87,1840`), so a preset name 400s before
+`resolvePermissions` is reached. The SDK type is already
+`@deprecated` and `deletePreset`'s own doc comment planned work for a caller that
+does not exist, which is what makes a frozen subsystem read as half-wired to the
+next person in the file. That the Phase 1 sweep corrected 322 statements across 103
+files and left all four of these standing is itself evidence: they are not typos,
+they are statements no one could correct without first answering this question. On
+#79's arithmetic the register is wrong: no fixture in the repo sets a non-empty
+preset map — 75 sites pass `permissionPresets: {}` explicitly — so this was a
+type-field question, not a fixture sweep, and the field is kept so those 75 sites
+and any older client still compile. #80 rides along:
+`docs/concepts/permissions.mdx` now separates a **creation template** (the UI's
+copy-once shortcut) from a **permission preset** (the durable legacy row),
+"bundle" is retired as the third name for that row, and
+`docs/getting-started.mdx`'s "give it the agent preset" — which meant a creation
+template and named a shortcut that does not exist — is corrected. Held by
+`apps/server/test/permission-preset-boundary.test-d.ts`, which fails the build the
+moment one of the three deleted methods returns.
+
+### D19 ▸ — One slug grammar for variables: the strict one. **proposed**
+
+**Decided.** 32 characters, `^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$|^[a-z0-9]$`,
+everywhere. `SLUG_PATTERN`, `SLUG_MAX_LENGTH` and `SLUG_RULE` live in
+`csuite-sdk/protocol` (`packages/sdk/src/protocol.ts:375-381`) and every consumer
+reads them: `ChannelSlugSchema` and `ToolSourceSlugSchema` through one
+`slugSchema()` helper (`packages/sdk/src/schemas.ts:19`), `validateSlug`
+(`packages/core/src/channels.ts:157`) and `validateSourceSlug`
+(`packages/core/src/tool-sources/store.ts:64`) on the server, and the five MCP
+`slug` descriptions, which interpolate the bound
+(`packages/cli/src/runtime/tools.ts:99`) rather than restating it.
+`validateVariableSlug` (`packages/core/src/variables.ts:424`) survives and
+delegates to `validateSourceSlug`, wrapping `ToolSourcesError` in `SecretsError`
+the way `SecretsStore.create` already does. The canonical uniqueness rule is
+recorded: a slug is unique within its store, never across stores. Executed in
+`79ebef4`.
+
+**Rejected:** giving variables their own 64-character `VariableSlugSchema`. That
+splits a schema currently shared three ways and contradicts the comment above
+`VariableSummarySchema` — *"a variable and a secret share one environment
+namespace, so they must share one name validator."* Also rejected: deleting
+`validateVariableSlug`, which is a published export of `csuite-core` and therefore
+a breaking change to fix a comment.
+
+**Why.** Three surfaces stated three rules and the agent-facing one was the loosest
+and the least enforced: `tools.ts` told agents "max 64",
+`CreateVariableRequestSchema` refused over 32, and the store allowed 64 plus
+`git--token` and `git-token-`. Because `client.createVariable` parses the schema
+client-side, an agent that believed its own tool schema got a ZodError rendered as
+a raw issue dump with no way to learn the real rule. The audit's caveat — that
+strictness "may reject slugs already on disk in deployed brokers" — does not apply:
+HTTP is the only writer, it has been 32-strict since variables shipped, and
+`migrateIdentityToVariables` inserts slugs the secrets store already validated.
+Only a direct write to the SQLite file could sit outside the grammar. The same
+function's comment carried a second false claim, that a variable slug "may not
+collide with a secret's" (#136). Nothing enforced it at any layer, and the stated
+reason was void: change events thread as `secret:<slug>` and `variable:<slug>`, two
+distinct prefixes. `packages/web-ui/src/lib/routes.ts:50-52` already stated the
+correct rule, and the web UI's entire URL scheme is built on the fact the comment
+denied.
+
+**Note on the framing.** The brief called this "the store's grammar". The store
+that owns the surviving rule is the secrets/tool-source store
+(`validateSourceSlug`, 32-strict); the *variables* store's 64-character copy is the
+one that goes. The constraint that actually rejects on the HTTP path is the
+schema's, and both agree at 32.
+
+### D23 — Excise the context watchdog. **proposed**
+
+**Decided.** Every description of a live context watchdog is removed —
+`packages/sdk/src/types.ts` (the `InstructionBlockKind` block-kind comment),
+`packages/cli/src/runtime/fixed-context.ts`,
+`packages/cli/src/runtime/context-control.ts`, `packages/core/src/instructions.ts`
+twice, and `docs/dev/trace-pipeline.mdx` — and the removal is recorded where a
+reader will look for it (`packages/cli/src/runtime/fixed-context.ts:52-59`) rather
+than left as an unexplained absence. `instructionCaptureExemptions`
+(`packages/core/src/instructions.ts:145`) is described as what it is today: a
+redaction scope that keeps operator-authored prose readable in stored captures.
+Executed in `a06746d`.
+
+**Rejected:** reinstating the detectors, which re-adopts a measured failure mode;
+and excising the exemption along with the watchdog, which would replace every
+registered secret value occurring inside `team_context` or personal instructions
+with `[REDACTED]` in the stored capture. That is a security trade with its own
+trade-offs and belongs in its own issue.
+
+**Why.** Both watchdogs were deleted deliberately in PR #185 (`c9e4a85`) with a
+measurement behind it: *"97% of the reminder pushes went to members whose captures
+the detector could not reliably read … while the runner's once-per-session
+`context_refresh` re-brief never misfired"* (`CHANGELOG.md:624-629`). The comments
+outlived a decision rather than anticipating a feature. The claim they supported
+survives on better grounds: the `InstructionBlockKind` strings are still pinned
+wire because they ship as `blocks[].kind` on `GET /instructions`
+(`packages/core/src/app.ts:1508-1512`) and inside `changed` on the
+`kind: 'instructions'` channel event (`:1026-1028`) — both already covered by
+`apps/server/test/instructions-versioning.test.ts`, so the new citation is a tested
+one and the dead one was not. There are five sites, not four; the register misses
+`docs/dev/trace-pipeline.mdx`, which is published documentation and therefore the
+one a reader is most likely to believe. The `watchdog` mentions in
+`packages/cli/src/runtime/trace/work-state.ts:274` and
+`packages/cli/src/runtime/trace/hook-server.ts:340` are the work-state max-age
+timer, a different mechanism, and were not swept.
+
+### D29 ▸ — `canWrite` on write responses. **proposed**
+
+**Decided.** `withCapability` is applied at every public method boundary of the
+filesystem store — `writeFile`
+(`packages/core/src/files/filesystem-store.ts:564`), `copyByBlobRef` (`:660`),
+both `mkdir` branches (`:673,686`) and both `move` returns (`:758,798`) — so every
+`FsEntry` the store hands a caller carries the field. The private
+ancestor-creation helpers still return bare rows, because their results are
+consumed internally and never reach a caller. `FsEntry.canWrite` is documented as a
+property of the entry rather than of the verb, and `undefined` now means one thing
+only: a server older than the field. Executed in `f136d6d`.
+
+**Rejected:** narrowing the contract to read projections, which buys a permanent
+carve-out every future `FsEntry`-returning route inherits and leaves a client
+unable to tell "this verb does not send it" from "this server is old". Also
+rejected: stamping `canWrite: true` on write responses. It is provably correct
+today — every write path gates on the predicate — and it re-derives the answer from
+control flow, which is exactly the pattern the module header tells clients not to
+use, and it goes wrong silently the first time a write path lands whose gate is
+something else.
+
+**Why.** The evidence that decides it is the store's own header
+(`packages/core/src/files/filesystem-store.ts:36-40`): *"Every entry returned to a
+caller carries `canWrite` — this store's own answer for that viewer."* That is not
+aspirational prose written elsewhere by someone else; it is the store stating the
+chosen behavior as a fact about itself, next to the code that did not do it. The
+gap landed exactly where the answer is least derivable — an entry created under
+`/objectives/<id>/` is owned by `obj:<id>` and writable by every member of that
+objective, which is why the field exists — and no shipped client was hurt only
+because `FilesPanel` throws the write response away and refetches. Cost is one
+predicate evaluation per mutation on a path that just ran the identical check as
+its permission gate.
+
+### D32 ▸ — `Teammate.identityId` leaves the wire. **proposed**
+
+**Decided.** Delete it. Gone from `Teammate` (`packages/sdk/src/types.ts:205-227`)
+and from `TeammateSchema` (`packages/sdk/src/schemas.ts:113-117`). The column, the
+backfill migration and `LoadedMember.identityId`
+(`packages/core/src/members-domain.ts:29`) stay: identity is still what offboarding
+keys on, just not a published fact, and the field now says so where the next reader
+will look. Executed in `d62800a`.
+
+**Rejected:** populating it — adding `identityId` to `teammatesFromMembers` and
+`loadedToMember`, which would make the SDK's promise true and let clients key on it
+forever, at the cost of publishing the broker's member primary key and putting a
+UUID per member into agent-visible instruction packets. Also rejected, on both
+branches: sending it only to `members.manage` holders, which fixes nothing about
+`Member extends Teammate` and adds a second asymmetry.
+
+**Why.** It was declared on the wire type, validated as a UUID by the schema, and
+stored `NOT NULL UNIQUE` with a migration that mints one per existing row — and
+populated by nothing. Not "populated by newer brokers": no response body in the
+product has ever carried it, on any endpoint, from any broker. Both projections
+received a `LoadedMember` that already held the value and dropped it. Outside tests
+and the store, `identityId` appeared in exactly three source files repo-wide, and
+none of them was a consumer.
+
+The declaration was worse than the absence. Its doc comment told a client author
+that names are reusable handles and this is the thing to key on across a departure;
+the `?` and the `.optional()` meant a client that believed it collected the entire
+team under one `undefined` with no parse error, no type error and no throw. And the
+absence was indistinguishable from "this broker predates typed offboarding" — the
+excuse the comment itself supplied, for a compatibility problem that cannot exist.
+
+**What this costs.** A client that needs to survive an explicit post-departure name
+reuse now has no way to, and cannot detect one. That is a real capability given up,
+and adding the field back later is a wire addition anyway. If the commercial
+platform (out of repo, consuming this broker's `/members`) already needs a
+name-stable key, this is the decision to revisit — it was the one fact the audit
+could not see.
+
+**Note for the release notes.** `.release/doors.json:111` records a prior door
+ruling, PR 260, *"stable member identityId: additive wire field + on-disk
+migration"*. The on-disk half shipped; the wire half never did. D32 reverses the
+wire half explicitly.
+
+**The other half of the register row is a straight defect, not a decision.**
+`loadedToMember` did not project `kind` while `teammatesFromMembers` did, so one
+URL served two non-nested field sets chosen by permission
+(`packages/core/src/app.ts:5567-5574`): a `members.manage` holder received rows a
+plain teammate's rows were not a subset of. Since the consumer rule for an absent
+`kind` is "render the absent case as the neutral (agent) treatment"
+(`packages/sdk/src/types.ts:219-226`), the member-management panel would have drawn
+every human on the team as an agent had it trusted its own fetch — it does not, it
+reaches back into the roster signal (`packages/web-ui/src/lib/roster.ts:105-107`),
+which is a workaround for the endpoint rather than a witness that it works. The
+derivation is now one function (`memberKindFields`,
+`packages/core/src/members-domain.ts:315`), `loadedToMember` is typed `Member`
+(`packages/core/src/app.ts:6914`), and `GET /members` and `PATCH /members/:name`
+carry `kind` on both branches. More permission never returns less data.
+
+**Still open, and it needs its own answer.** The no-`members.manage` branch returns
+a `Teammate` under `ListMembersResponseSchema`'s declared `Member[]`
+(`packages/sdk/src/schemas.ts:1883`), and `MemberSchema.instructions` has
+`.default('')` (`:122`), so `client.listMembers()` hands an unprivileged caller a
+`Member[]` in which every member appears to have empty personal instructions.
+"Nobody has instructions" is indistinguishable from "you were not allowed to see
+them", and the SDK's return type asserts the first. The fix is a 403 or a split
+response schema — a wire decision this one does not settle. Documented as a hazard
+in `docs/dev/rest-api.mdx` in the meantime.
+
+Register #11 and #18 unblock. Held by
+`packages/sdk/test/teammate-projection.test.ts` and
+`apps/server/test/member-projection-parity.test.ts`, the latter with a
+TOTP-enrolled member in the fixture — the enrollment every prior fixture lacked,
+which is why a test that did look at `kind` would have proved nothing.
+
+### D46 ▸ — `/history` gets the composite cursor. **proposed**
+
+**Decided.** `before_ts` + `before_id`, with `before_id` the message's own id — the
+audit's option (a). Executed in `3f575da`. The consequence is real and should be
+recorded rather than discovered: **`before_id` is a string on `/history` and a
+number on the activity, gen-AI and telemetry reads.** One paging helper cannot be
+written generically over both.
+
+**Rejected:** the design note's preferred (b), a monotonic `seq` on `Message`. It
+would have put a new field on the most-consumed wire type in the SDK and obliged
+every future event-log backend to produce one; the decision as taken names
+`before_ts`/`before_id` and nothing about a new response field, and a composite
+cursor is unusable unless its tiebreak is already visible in the response. If the
+string-versus-number cost proves higher than the `Message` change, (b) is still
+available additively. Also rejected: leaving the scalar bound in place, which drops
+every row sharing the page-boundary millisecond with the last row of the previous
+page — the web UI's thread paging was already using exactly that pattern.
+
+**Why.** Both `EventLog` implementations moved together — the SQL seeks
+`(ts < ?1 OR (ts = ?1 AND id < ?2))` and orders `ts DESC, id DESC`, and the
+in-memory log now walks in that order rather than in insertion order, a divergence
+that was invisible until a cursor required the two to agree. The three
+`events_*_ts_idx` indexes are dropped and recreated as `events_*_ts_id_idx`,
+because `CREATE INDEX IF NOT EXISTS` cannot widen an existing index and would have
+left every deployed database on the narrow one while succeeding silently. Plans
+were re-measured with `EXPLAIN QUERY PLAN` against the statements production
+actually runs; the previous assertions in `apps/server/test/query-plan.test.ts`
+described a scalar query that no longer exists.
+
+`?before=` is accepted for one release and read as `before_ts`
+(`packages/core/src/app.ts:569`); `before_ts` alone remains a valid scalar bound
+and remains lossy, which is now what its name says. **Removal condition: the same
+next minor as D44's aliases** — one entry in the history cursor renames, one in the
+deliveries renames, `HistoryQuery.before`, and the two `legacy: ['before']` rows in
+the census. Defect #256 closes with `3f575da`; the fixture that proves it
+(`apps/server/test/history-composite-cursor.test.ts`) pages a shared millisecond
+one row at a time across both backends and asserts the whole id sequence, because a
+pager returning *some* of the right answer is the defect itself.
+
+### D47 ▸ — Fix the exit-code contract in the code. **proposed**
+
+**Decided.** The published table is right and the code moves to it. Usage error
+means the argv is wrong and exits `2`; startup and environment failures exit `1`
+through a distinct carrier, `StartupError`, added beside `UsageError` in
+`packages/cli/src/commands/errors.ts:40`. `RunnerStartupError` (an unreachable
+broker, `packages/cli/src/runtime/runner.ts:81`), `AgentAdapterError` (a missing
+agent binary, `packages/cli/src/runtime/agents/adapter.ts:57`) and a missing token
+stop being converted to `UsageError`. All catch arms in
+`packages/cli/src/index.ts` funnel through one `failFrom()` (`:127`), so a class
+cannot answer differently from two entry points again. `64` is published in
+`docs/reference/cli.mdx:687` as refused configuration. Executed in `b05a5c2`, and
+completed in `de6d79a` — the `error` wire-field half of D47 is untouched and stays
+open.
+
+**Rejected:** widening the doc so `2` means "usage or startup". It is free and it
+permanently costs the code its meaning — `2` stops being a do-not-retry signal, and
+`packages/cli/src/commands/errors.ts:1-10` becomes a comment describing an
+intention the CLI abandoned.
+
+**Why.** The decisive fact is not the doc/code mismatch, it is that the CLI
+contradicted *itself* on one condition. `formatHeadlessNoAuth` produced exit 1 from
+a runner verb and exit 2 from `install-service` and from `cycle` — the same
+formatter on the same (url, cwd) lookup key. No documentation change makes both
+correct, so widening the doc does not close #253; it only stops the docs from being
+provably wrong. The behavior change is real: an operator following the table and
+writing `RestartPreventExitStatus=2` had a runner that stayed down after a broker
+bounce, which is the single most common transient failure in the system and the one
+`Restart=always` exists for. Two calls the drafts did not make, both taken here:
+`install-service`'s no-auth refusal moves to **1**, not 2 — it is the same missing
+credential discovered earlier — and seven further `install-service` / `cycle`
+refusals outside the draft's enumeration (no root and no passwordless sudo, a
+privileged command that failed, an unsnapshottable file, an install-or-verify
+failure, and twice a unit that installed but never came live) move to 1 as well,
+because the published `2` row now says "and nothing else". That second half is
+`de6d79a`, deliberately separable: reverting it alone leaves the enumerated fix
+intact. Held by `packages/cli/test/commands/exit-codes.test.ts`, a 4×4 matrix of
+failure class against entry point in which every cell either states a code or
+states why it is unreachable, and a completeness test fails the build when a verb
+is added without covering it.
+
+### Still open
 
 | decision | question |
 |---|---|
-| D3 ▸ | Does `members.manage` imply objective read? |
-| D4 ▸ | Which way does `recent` go — the general channel, or the viewer's feed? |
-| D5 ▸ | Is the general-channel readback of untagged scoped fan-outs a defect? |
 | D8 | Should agents see work state at all? |
-| D9 ▸ | Do `/roster` and `/team/status` owe the same `Presence` shape? |
-| D11 | Is the preset system deprecated-but-supported, or supported? |
 | D12 | Does `objectives.create` keep gating the team-wide ledger read? |
 | D13 | Do fresh channel memberships stop accepting `role: 'admin'`? |
 | D16 | Does the KEK-optional degraded mode stay? |
-| D19 ▸ | Which slug grammar wins for variables — 32 or 64? |
 | D20 | Ship, delete, or rename `ContextPack`? |
 | D22 | Is the external-notification doctrine a fifth instruction block? |
-| D23 | Reinstate or excise the context watchdog? |
 | D24 | Is the Web Push scope gap a bug or the design? |
 | D28 | Should `Attachment` gain a `hash` field? |
-| D29 ▸ | Should `canWrite` be applied on write responses, or the contract narrowed? |
 | D30 | Does `/t/:team` stay in the OSS router? |
-| D32 ▸ | `Teammate.identityId`: send it or delete it? |
-| D46 ▸ | Should `/history` get the composite cursor? |
-| D47 ▸ | Fix the exit-code contract, or fix the docs? Does `error` stay the wire field name? |
 | D50 | Should `csuite team-process` exist? |
-| D52 | Keep, extend, or drop `csuite tools enable|disable`? |
+| D52 | Keep, extend, or drop `csuite tools enable\|disable`? |
 
 Two of these are security posture rather than either naming or design, and
 should be read as such: **D16**, whether a broker may run with secrets in

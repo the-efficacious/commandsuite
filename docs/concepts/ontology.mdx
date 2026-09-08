@@ -81,9 +81,10 @@ somewhere, so nothing in a code review flags the fifth use.
 | disposition | **message disposition** (a runner's terminal acknowledgement) · **amendment disposition** (`correction` vs `scope_change` on a team-process edit) |
 
 Two of these are already settled elsewhere and are listed so the word stays reserved:
-**activity** resolves by D6, which finishes the work-state rename on the wire, and
-**gate** resolves by D39, which keeps the runtime permission check on the product side
-and puts every repository-process sense in the contributor glossary.
+**activity** is resolved by D6, executed in `6a2f878`: the wire now says work state, and
+the word is the durable stream's alone once the one-release shims go, and **gate**
+resolves by D39, which keeps the runtime permission check on the product side and puts
+every repository-process sense in the contributor glossary.
 
 **Broken today.** `Team.context` (`packages/sdk/src/types.ts:164`) spends three lines of
 its own doc-comment disowning the other sense — *"Distinct from agent conversation
@@ -174,9 +175,9 @@ the field level.
 `status` for `ObjectiveStatus`: `status: number | null` on the captured Anthropic
 exchange (`packages/sdk/src/types.ts:2017`) and `status: 401` on the auth-state activity
 event (`:2631`). Both should be `httpStatus`, so `status` never means a number. In the
-other direction, `Teammate.kind?: 'person' | 'agent'` (`:210`) declares a two-value union
-that the only writer never completes — `teammatesFromMembers`
-(`packages/core/src/members-domain.ts:265-276`) emits `'person'` or omits the field — so
+other direction, `Teammate.kind?: 'person' | 'agent'` (`:226`) declares a two-value union
+that its one derivation never completes — `memberKindFields`
+(`packages/core/src/members-domain.ts:315`) emits `'person'` or omits the field — so
 a consumer trusting the declared union waits for a value that never arrives.
 
 ### Identifiers
@@ -210,12 +211,11 @@ uses an underscore where the objective id one file over uses a hyphen —
 must learn four words for "which one" — `id` for objectives
 (`packages/cli/src/runtime/tools.ts:361`), `slug` for the four registries (`:804`,
 `:1030`), `channel` for channels (`:240`), and `deliveryId` for delivery receipts
-(`:1526`). And the slug grammar has two disagreeing validators: `validateVariableSlug`
-(`packages/core/src/variables.ts:406`) accepts 64 characters (`:410`) and the pattern
-`^[a-z0-9][a-z0-9-]*$` (`:413`), which permits `foo--bar` and `foo-`, under a doc-comment
-that claims the opposite — *"Slug grammar, matching the secrets store's"* (`:402`) —
-while the request schema validates the same field against the strict 32-character
-tool-source grammar.
+(`:1526`). The slug grammar's second disagreement is closed: `validateVariableSlug`
+(`packages/core/src/variables.ts:424`) accepted 64 characters and the pattern
+`^[a-z0-9][a-z0-9-]*$`, which permits `foo--bar` and `foo-`, under a doc-comment that
+claimed the opposite; since D19 it delegates to `validateSourceSlug` and the whole tree
+reads one `SLUG_PATTERN` / `SLUG_MAX_LENGTH` from `csuite-sdk/protocol`.
 
 ### Query parameters and cursors
 
@@ -230,14 +230,18 @@ string, `ifOffline` in the type, `--if-offline` on the command line, documented 
 table. Direction has to be in the name because today it is nowhere, and a client that
 reuses one endpoint's paging loop against a sibling endpoint does not terminate.
 
-**Broken today.** Three casings coexist on one surface. `c.req.query('stalledMs')`
-(`packages/core/src/app.ts:1454`) and `c.req.query('clientKind')` / `('clientVersion')`
-(`:4879-4880`) are camelCase on the wire, beside `cursor_ts` / `cursor_id` (`:2036-2037`)
-and `if_offline` (`:4212`), which are not. Worse, the same two parameter names page in
-opposite directions on sibling endpoints: the telemetry route maps them to
-`after: { ts, id }` (`:2064`) and the activity route maps them to `before: { ts, id }`
-(`:5219`), so a client that feeds the newest row back as `cursor_ts` on the oldest-first
-walk advances the wrong way and never reaches the end of a live stream.
+**Done.** All four camelCase survivors are swept — `stalledMs` → `stalled_ms`,
+`parentOrigin` → `parent_origin`, `clientKind`/`clientVersion` →
+`client_kind`/`client_version` — and the composite cursor is split by direction:
+`before_ts`/`before_id` on the newest-first reads (`/history`,
+`/members/:name/activity`), `after_ts`/`after_id` on the oldest-first ones
+(`/members/:name/genai`, `/members/:name/telemetry`). The stores' directions are
+unchanged; only the wire grammar moved. Each retired spelling is accepted for one
+release, loses to the current name when both arrive, and answers with
+`Deprecation: true` plus `X-CSuite-Deprecated-Query: <legacy>=<current>`. The rule is
+now executable: `packages/core/test/query-parameter-census.test.ts` reads the router
+and pins the names every route accepts, so a camelCase parameter cannot be
+reintroduced silently.
 
 ### Time fields
 
@@ -390,13 +394,21 @@ a second kind of participant.
   holder reads from `GET /members`) · member (the seat itself — never write "teammate"
   as a bare synonym for the row) · Connection presence (live connection state for the
   same name)
+- **Decided** — D32: `identityId` leaves the wire; the member name is the whole public
+  handle, and the broker's stable identity id stays server-internal for offboarding
+  (2026-09-08). `loadedToMember` projects `kind` on the same change, so
+  `Member extends Teammate` holds on both branches of `GET /members`.
 
-`Member extends Teammate` in the type layer, but nothing on the wire matches the
-declaration. `teammatesFromMembers` emits `kind` and `loadedToMember` does not, and
-neither emits `identityId`. So a caller holding `members.manage` gets `GET /members` rows
-*without* `kind` while a caller without it gets rows *with* it — under one declared
-response type, `ListMembersResponse { members: Member[] }`, which the second branch does
-not return.
+`Member extends Teammate` is now a wire promise, not only a type-layer one: the full
+record is the public record plus `instructions`, and every field `Teammate` declares is
+carried on every `Member` the broker emits. Both branches of `GET /members` derive `kind`
+from one function (`memberKindFields`, `packages/core/src/members-domain.ts:315`), and
+`loadedToMember` is typed `Member` (`packages/core/src/app.ts:6914`) so a future omission
+is a compile error rather than a permission-shaped hole. One asymmetry survives and is not
+about `Teammate`: the no-`members.manage` branch omits `instructions` entirely, and
+`MemberSchema.instructions` has `.default('')` (`packages/sdk/src/schemas.ts:122`), so
+through `client.listMembers()` an unprivileged caller cannot distinguish "nobody has
+instructions" from "you were not allowed to see them".
 
 ### Member kind
 
@@ -407,8 +419,9 @@ alone." An agent seat that enrolls TOTP is silently reclassified as a person, be
 nothing else is consulted.
 
 - **Names** — SDK `Teammate.kind` · schema `TeammateSchema.kind` · core
-  `teammatesFromMembers()` (the only writer) · web-UI `memberKind()`, `data-kind`
-  attribute, `senderTextClass()` · docs [Members](/docs/concepts/members),
+  `memberKindFields()` (`packages/core/src/members-domain.ts:315` — the one derivation,
+  spread by both `teammatesFromMembers()` and `loadedToMember()`) · web-UI `memberKind()`,
+  `data-kind` attribute, `senderTextClass()` · docs [Members](/docs/concepts/members),
   [Glossary](/docs/concepts/glossary)
 - **Not** — Agent (execution-runtime: the LLM child process a runner spawns and holds a
   handle to) · `ActivityLlmExchange.agent` / `ActivityToolAction.agent` (which capture
@@ -423,7 +436,9 @@ nothing else is consulted.
 - **Values** — `person` — the row has a TOTP secret · *absent* — it does not, and
   consumers render the neutral (agent) treatment rather than guessing. `'agent'` is
   declared in the union and in the zod enum and no code path emits it;
-  `apps/server/test/teammate-kind.test.ts` pins "absent, not `'agent'`".
+  `apps/server/test/teammate-kind.test.ts` pins "absent, not `'agent'`", and
+  `apps/server/test/member-projection-parity.test.ts` pins that both branches of
+  `GET /members` agree about it.
 - **Decided** — D2: `kind` is a heuristic over the auth plane and is named for what it
   measures, over promoting person/agent to a stored `members.kind` column (2026-09-03)
 
@@ -462,15 +477,17 @@ publicly in the roster and in every member's instruction packet. It is descripti
 ### Roster
 
 The team's member list joined to live presence, in one response: `teammates`,
-`connected`, `restartPending`, and `activityWindowMs` — the window the broker applied when
-deciding whether a work-state report is recent.
+`connected`, `restartPending`, and `workStateWindowMs` — the window the broker applied
+when deciding whether a work-state report is recent.
 
 - **Names** — SDK `RosterResponse` · route `GET /roster` · CLI `csuite roster` · MCP
   `roster` · web-UI `roster` signal
 - **Not** — the `members` table (storage; its own comment calls itself "roster" and
   should not) · `GET /members` (the management list — full `Member` records for a
   `members.manage` holder, with no presence attached) · `GET /team/status` (per-member
-  objectives and stall verdicts) · Connection presence (live connection state on its own)
+  objectives and stall verdicts, carrying the identical `Presence` since D9 — the
+  difference is the objective and stall layer, not the presence shape) · Connection
+  presence (live connection state on its own)
 - **Verbs** — list
 
 ### Viewer identity
@@ -486,9 +503,9 @@ responsibility, not the shell's.
   `GET /session`, `POST /session/totp`, `POST /session/logout` · core `c.get('member')`
   (a `LoadedMember` on the server request context)
 - **Not** — Client identity (`ClientIdentity` / `RunnerIdentity` — observational facts a
-  subscriber reports, which never authorize) · Identity id (the stable member id, never
-  emitted) · Member (the stored row; `Identity` is a client-side resolved copy of part
-  of it)
+  subscriber reports, which never authorize) · Identity id (the stable member id —
+  server-internal by decision since D32, not merely unemitted) · Member (the stored row;
+  `Identity` is a client-side resolved copy of part of it)
 
 ### Client identity
 
@@ -502,9 +519,9 @@ member can hold several connections reporting different client identities.
   `IdentityContext.clientIdentity` · route `GET /roster` → `Presence.clientReports`,
   `Presence.runnerReports` · docs [Presence](/docs/concepts/presence)
 - **Not** — Viewer identity (`Identity` — who is signed in, and what the UI gates on) ·
-  Identity id (the stable member id) · Member (the seat) · Permission leaf (the only
-  thing that authorizes) · Member kind (person vs agent, derived from TOTP enrollment,
-  not from what a connection claims)
+  Identity id (the stable member id, server-internal and not on the wire) · Member (the
+  seat) · Permission leaf (the only thing that authorizes) · Member kind (person vs
+  agent, derived from TOTP enrollment, not from what a connection claims)
 - **Values** — `kind`: `runner` `browser` `cli` `sdk`. A `browser`, `cli` or `sdk` client
   reports `clientVersion` and nothing else. A runner reports its whole `RunnerIdentity` —
   the runner verb (`claude`, `codex`, `stub`), the model id the adapter resolved, the
@@ -558,7 +575,8 @@ refuses prose that names a count at all.
   names understate what they grant, and those glosses live here:
   `members.context` is control over *another* member's runner context, since
   doing it to your own is baseline; `objectives.create` grants creating **and**
-  reading the team-wide objective ledger; and rows written before the rename
+  reading the team-wide objective ledger — as of D3 `members.manage` reads the
+  same ledger without the authoring rights; and rows written before the rename
   still say `process.manage`, which resolves to `team_process.manage`
 - **Verbs** — granted by writing the whole list on `POST /members` or
   `PATCH /members/:name`; checked with `hasPermission`; never granted
@@ -648,20 +666,31 @@ leaves, and the surfaces that print the word all test `permissions.length === 0`
 
 A durable, server-side, named bundle of leaves in the `permission_presets` table,
 referenced by name inside a member's raw permissions and expanded on every read.
-"Legacy named bundles retained only to read teams created by older versions." At
-HEAD no shipped surface can create one: `setPreset` and `deletePreset` are
-reachable from a test helper and from no route, command or wizard, and no wire
-shape accepts a preset name.
+"Legacy named bundles retained only to read teams created by older versions."
+Read-only, and never re-opened: no shipped surface can create, edit or delete one
+— there is no REST route, CLI command, MCP tool or wizard, the wire refuses a
+preset name by construction, and since D11 the store has no write method either.
+They exist so a database written before the flat leaf model still loads; a
+current broker reports none.
 
-- **Names** — SDK `PermissionPresets`, `Team.permissionPresets` (`@deprecated`),
+- **Names** — SDK `PermissionPresets`, `Team.permissionPresets` (`@deprecated`;
+  current servers omit it and no current server writes one),
   `PermissionPresetsSchema` · DB table
   `permission_presets(name, permissions, updated_at, updated_by)` · core
-  `getPresets()`, the preset branch of `resolvePermissions`
+  `getPresets()` (`packages/core/src/team-store.ts:262`), the preset branch of
+  `resolvePermissions` (`packages/core/src/members-domain.ts:196`),
+  `validatePermissionPreset` (retained for reading pre-consolidation data)
 - **Not** — Creation template (a client-side copy that survives nothing) · a
   role, tier or category; expanding a preset produces leaves and the reference is
   invisible afterwards · Legacy permission alias (a fixed map in code, not a row
-  an operator ever wrote). Never call either one a "bundle" — that word is the
-  third name for this row and is retired
+  an operator ever wrote) · a feature awaiting a caller — `setPreset`,
+  `deletePreset` and `membersReferencingPreset` were deleted, and
+  `apps/server/test/permission-preset-boundary.test-d.ts` fails the build if one
+  returns. Never call any of this a "bundle" — that word is the third name for
+  this row and is retired
+- **Decided** — D11: read-only compatibility, never re-opened — delete the write
+  path and keep `getPresets()` with the resolution branch, over re-opening the
+  feature with routes and a wire shape that accepts preset names (2026-09-08)
 
 ### Creation template
 
@@ -1005,7 +1034,8 @@ them read **and** write on `/objectives/<id>/` through the objective-membership 
   `watcher_removed` · MCP `objectives_update.addWatchers` / `.removeWatchers` · UI
   "Watchers", "Initial watchers (optional)" · permission `objectives.watch` · docs
   [Objectives](/docs/concepts/objectives), [Files](/docs/concepts/files)
-- **Not** — `members.manage` holder (an implicit observer of every objective thread,
+- **Not** — `members.manage` holder (an implicit member of every objective thread —
+  pushed its events, able to post, and, since D3, able to read the objective —
   deliberately absent from this list; the UI create screen calls them "Directors"
   (`packages/web-ui/src/components/ObjectiveCreate.tsx:242`), a word that exists nowhere
   else in the product and should not be learned — the detail screen one component over
@@ -1027,48 +1057,53 @@ them read **and** write on `/objectives/<id>/` through the objective-membership 
 ### Objective party
 
 The stored relationship: `{assignee, originator, watchers}`. This is the predicate the
-list route answers as `related`, the objective-detail read gate calls "thread
-participant", and the filesystem ACL calls membership of the objective — one set,
-computed identically in three places under three names. *(defined in code only)*
+list route answers as `related` and the filesystem ACL calls membership of the objective
+— one set, computed identically in two places under two names. The objective-detail read
+gate no longer tests it: since D3 that gate tests the thread audience.
+*(defined in code only)*
 
-- **Names** — core `isParticipant` (`packages/core/src/app.ts:4443-4446`), `relatedTo`
-  (`:4406-4409`), `objectiveAcl.isMember` / `isObjectiveMember`
-  (`packages/core/src/files/filesystem-store.ts:324-329`; `apps/server/src/run.ts:572-579`)
+- **Names** — core `relatedTo` (`packages/core/src/app.ts:4577-4580`),
+  `objectiveAcl.isMember` / `isObjectiveMember`
+  (`packages/core/src/files/filesystem-store.ts:335-340`; `apps/server/src/run.ts:574-580`)
   · SDK `ListObjectivesQuery.related` ("assigned, originated, or watching") · query
   `GET /objectives?related=`
 - **Not** — Thread audience (this set plus every `members.manage` holder — the push
-  fan-out, which is strictly wider) · Watchers (one of the three terms, not the set) ·
-  Plate (the assignee term alone). A member's **related objectives** are the objectives
-  they are a party to; that is the symmetrical name, and it is the wire's.
-- Two code paths disagree about `members.manage` holders and the disagreement is
-  unresolved: they are in the push audience and may post to the thread, yet
-  `GET /objectives/:id` answers them "not a thread participant; viewing requires
-  objectives.create" (`packages/core/src/app.ts:4441-4445`). Whatever the gate ends up
-  being, its error text must stop naming thread membership for a test that is not thread
-  membership.
+  fan-out, the `/discuss` gate **and, since D3, the read gate**, which is strictly
+  wider) · Watchers (one of the three terms, not the set) · Plate (the assignee term
+  alone). A member's **related objectives** are the objectives they are a party to; that
+  is the symmetrical name, and it is the wire's.
+- **Decided** — D3: widen the objective read gate to the thread audience;
+  `GET /objectives/:id` and `GET /objectives` admit `members.manage` holders, and the
+  403 names the predicate the gate tests (2026-09-08).
 
 ### Thread audience
 
 The set an objective push actually fans out to: the objective party plus every member
 holding `members.manage`, plus — for one event only — the previous assignee on
 `reassigned` and the removed watcher on `watcher_removed`, so each learns of their own
-exit. One function computes it, and two call sites use it: the lifecycle-event publisher
-(`packages/core/src/app.ts:4319`) and `POST /objectives/:id/discuss` (`:4728`). Watcher
-changes reach it as `watcher_added` / `watcher_removed` events through the publisher —
-the separate `/watchers` endpoint the function's own doc-comment still names was folded
-into `PATCH /objectives/:id`. *(defined in code only)*
+exit. One predicate states it (`onObjectiveThread`) and four surfaces use it: the
+lifecycle-event publisher, `POST /objectives/:id/discuss`, `GET /objectives/:id`, and the
+team-wide branch of `GET /objectives`. Watcher changes reach it as `watcher_added` /
+`watcher_removed` events through the publisher — the separate `/watchers` endpoint the
+function's own doc-comment still names was folded into `PATCH /objectives/:id`.
+*(defined in code only)*
 
-- **Names** — core `objectiveThreadMembers` (`packages/core/src/app.ts:4291-4311`) ·
-  route error `user '<name>' is not a member of objective <id>'s thread` · MCP
-  `objectives_discuss` description "thread members" · docs "The assignee, originator,
-  watchers, and members holding `members.manage` see lifecycle events and can post"
-  ([Objectives](/docs/concepts/objectives), `docs/concepts/objectives.mdx:116-117`)
+- **Names** — core `onObjectiveThread` (`packages/core/src/app.ts:4448-4452`),
+  `objectiveThreadMembers` (`:4468-4488`) · route error `viewing this objective requires
+  being on its thread (assignee, originator, watcher, or members.manage) or holding
+  objectives.create` · MCP `objectives_discuss` description "thread members" · docs the
+  `members.manage` row in [Permissions](/docs/concepts/permissions), "The assignee,
+  originator, watchers, and members holding `members.manage` see lifecycle events, can
+  read the objective, and can post"
+  ([Objectives](/docs/concepts/objectives), `docs/concepts/objectives.mdx:119-121`)
 - **Not** — Objective party (the stored trio, without `members.manage` holders) ·
   Delivery audience (the broker's per-message recipient list, a different family) ·
   Watchers (the explicit additions only). The `objectives_discuss` tool description tells
   agents the thread members are "the originator, the assignee, and all directors on the
-  team" (`packages/cli/src/runtime/tools.ts:429-430`) and omits watchers entirely; the
+  team" (`packages/cli/src/runtime/tools.ts:449`) and omits watchers entirely; the
   code includes them, and the code is right.
+- **Decided** — D3: this set, not the objective party, is the read audience for an
+  objective (2026-09-08).
 
 ### Objective event
 
@@ -1197,8 +1232,8 @@ name it, four independent sites re-implement the equivalence between them, and
 one of those four lives in raw SQL.
 
 - **Names** — core `GENERAL_CHANNEL_ID` (declared in the event log), `GENERAL_CHANNEL_SLUG` (declared in the channel store, importing the id) · wire tag `data.thread = 'chan:general'`, **or** no tag at all with `to: null` · web UI `PRIMARY_THREAD` = `'primary'`, aliased as `GENERAL_THREAD` · UI "#general" in the nav, "#team" in a toast, "Team Chat" in an inbox row, "◇ Net is quiet" as the empty state · docs [Channels](/docs/concepts/channels)
-- **Not** — Channel, in the parts that make a channel a channel: general cannot be joined, left, renamed, archived, or given member rows, and `isMember` is always true for it · Broadcast (the routing path general's pushes take, not a second destination) · `primary` (a browser-local map and unread key that never leaves the client and is not a wire value) · Default feed (the unscoped read, which is wider than this channel)
-- **Values** — a message is in general when `data.thread` is `chan:general` **or** when `to` is null and `data.thread` is absent. The MCP `broadcast` tool, the web-UI composer and `csuite push --broadcast` all emit the untagged form; only the external-notification dispatcher emits `chan:general`. The four sites that collapse the two forms are `queryGeneralStmt` (SQL), `matchesChannel` (in-memory log), `threadKeyOf` (web UI) and `extractChannelId` (runner forwarder).
+- **Not** — Channel, in the parts that make a channel a channel: general cannot be joined, left, renamed, archived, or given member rows, and `isMember` is always true for it · Broadcast (the routing path general's pushes take, not a second destination) · `primary` (a browser-local map and unread key that never leaves the client and is not a wire value) · Default feed (the unscoped `GET /history`, which is wider than this channel; the unscoped MCP `recent` is **not** — since D4 it reads this channel)
+- **Values** — a message is in general when `data.thread` is `chan:general` **or** when `to` is null and `data.thread` is absent. The MCP `broadcast` tool, the web-UI composer and `csuite push --broadcast` all emit the untagged form; only the external-notification dispatcher emits `chan:general`. The four sites that collapse the two forms are `queryGeneralStmt` (SQL), `matchesChannel` (in-memory log), `threadKeyOf` (web UI) and `extractChannelId` (runner forwarder). Since D5 the general read is also audience-aware: `queryGeneralStmt` and `matchesChannel` collect the two forms, and a row carrying a recorded delivery audience is then shown only to that audience and its sender — general's membership is implicit, so nothing else gates it.
 
 The web UI's comment calls `primary` a *persisted* last-read cursor; `unread.ts`
 states the unread state is non-persistent and resets on reload. The code is
@@ -1258,26 +1293,21 @@ fan-out answered. Absent from the wire deliberately; no client ever sees it.
 *(defined in code only)*
 
 - **Names** — core `PushContext.recipients`, `EventLogAppendOptions.recipients`, `ChannelStore.recipientNames()`, and the visibility rule `feedVisibleTo()` · DB `events.recipients` (JSON array or NULL) · docs the "Who sees it" column in [Events and messages](/docs/concepts/events)
-- **Not** — Read access, which is channel membership evaluated at read time: `GET /history?channel=<slug>` gates on `isMember` *now* and its SQL ignores `recipients` and the viewer entirely, so a new member reads back the whole pre-join history the recorded audience would have withheld from their feed. That backfill is deliberate; the readback of untagged scoped fan-outs (`instructions`, `context_control`, `environment`) through the general query is D5, a defect question, not a naming one. · Addressee (`to`, one name) · `DeliveryReport.targets` (the count reported back to the sender)
+- **Not** — Read access, which is channel membership evaluated at read time, governs `GET /history?channel=<named>` only: it gates on `isMember` now and its SQL ignores `recipients` and the viewer, so a new member reads back the whole pre-join history. `channel=general` is the exception (D5) — general has no membership to gate on, so the recorded audience decides there, exactly as it does in the feed. · Addressee (`to`, one name) · `DeliveryReport.targets` (the count reported back to the sender)
 - **Values** — `null` or omitted: no narrower audience — a DM, or a team-wide broadcast. It does **not** mean "audience unknown". · `[]`: a real audience that happens to be empty, whose message is not team-visible afterward. The two must never collapse.
+- **Decided** — D5: for `?channel=general` the delivery audience is authoritative; for a named channel, read access is (2026-09-08).
 
 ### Default feed
 
 What a member reads back when they name no scope: `GET /history` with neither
-`channel` nor `with`, and the MCP `recent` tool called with no argument.
-`feedVisibleTo()` computes it from the viewer's name — DMs in both directions,
-every team-wide broadcast, and every scoped row whose recorded audience contains
-the viewer, so objective posts, registry chatter and instruction notices arrive
-interleaved. Three surfaces call it the general channel and none of them is
-right. *(defined in code only)*
+`channel` nor `with`. `feedVisibleTo()` computes it from the viewer's name — DMs
+in both directions, every team-wide broadcast, and every scoped row whose
+recorded audience contains the viewer, so objective posts, registry chatter and
+instruction notices arrive interleaved. *(defined in code only)*
 
-- **Names** — route `GET /history` with no `channel` and no `with` · core `feedVisibleTo()`, `EventLogQueryOptions.viewer` · MCP `recent` with no scope argument · CLI runtime the empty-state string "no messages in `<team>` team channel" and the header "recent `<team>` team chat" · docs [Events and messages](/docs/concepts/events), "Agents call `recent` — no argument for `general`"
-- **Not** — `general` (the channel; `GET /history?channel=general` runs `queryGeneralStmt`, a different query that matches `data.thread = 'chan:general'` OR `to_name IS NULL AND data.thread IS NULL` and applies neither `recipients` nor the viewer) · Inbox (the web UI's computed attention list, not a query) · Delivery audience (the send-time list this read filters against) · Redelivery (the runner's replay of unacknowledged work, which the feed does not carry)
-
-Which way this resolves is a product decision, not a naming one: either the
-unscoped call narrows to `channel=general` and matches every description of it,
-or the tool description, the empty-state string and the docs sentence stop
-calling the viewer's whole feed a channel.
+- **Names** — route `GET /history` with no `channel` and no `with` · core `feedVisibleTo()` — the rule the general-channel read now shares — and `EventLogQueryOptions.viewer`
+- **Not** — `general` (the channel; `GET /history?channel=general` runs `queryGeneralStmt`, which matches `data.thread = 'chan:general'` OR `to_name IS NULL AND data.thread IS NULL` and then applies the same `feedVisibleTo` audience rule this feed uses — the two reads differ in which rows are candidates, not in who may see them) · Inbox (the web UI's computed attention list, not a query) · Delivery audience (the send-time list this read filters against) · Redelivery (the runner's replay of unacknowledged work, which the feed does not carry)
+- **Decided** — D4: the unscoped `recent` is the general channel, not this feed; `GET /history` with no scope is still this feed (2026-09-08).
 
 ### Message delivery
 
@@ -1377,9 +1407,10 @@ delivered to live-tail subscribers synchronously after the write commits.
   `ActivityInspector` · docs
   [Activity and traces](/docs/concepts/activity-and-traces)
 - **Not** — Work state (the momentary roster reading, held in memory and
-  forgotten; `Presence.activity`, `activityWindowMs` and `POST /presence/activity`
-  are its legacy wire spelling, which D6 replaces with `Presence.workState`,
-  `workStateWindowMs` and `/presence/work-state`) · Activity database (the SQLite
+  forgotten; the wire says `Presence.workState`, `workStateWindowMs` and
+  `POST /presence/work-state` since D6, and emits `Presence.activity`,
+  `activityWindowMs` and the `/presence/activity` route beside them for one
+  release only) · Activity database (the SQLite
   file holding this table and four more) · Message (the chat row `EventLog`
   appends to table `events`) · Objective trace (one objective's slice of this
   stream) · `csuite-server` — the SQLite implementation lives in `csuite-core`
@@ -1648,7 +1679,8 @@ bytes being readable.
 
 - **Names** — core `CaptureHealth`, `CaptureHealthStore.forMember`,
   `CAPTURE_GRACE_MS` (15s) · SDK `CaptureHealthState`, `CaptureHealthStateSchema`
-  · route `Presence.captureHealth` on `GET /roster` · UI `presenceCaptureWarning`,
+  · route `Presence.captureHealth` on `GET /roster` and `GET /team/status` (one
+  population since D9) · UI `presenceCaptureWarning`,
   badges "NO CAPTURE" and "CAPTURE UNCHECKED", per-turn "not captured"
   *(defined in code only)*
 - **Not** — Diagnostics-store health (`RetentionHealth` = `healthy` / `degraded` /
@@ -1762,9 +1794,9 @@ A roster row answers three questions that the code keeps strictly apart and that
 prose has repeatedly merged: is the link alive (**connection presence**), what is
 the agent doing on it (**work state**), and can its runner act at all (**executor
 state**). Four separate comments in the tree call these "orthogonal"
-(`packages/sdk/src/types.ts:9-14`, `packages/core/src/work-state.ts:3-5`,
-`packages/cli/src/runtime/trace/busy.ts:11-13`,
-`packages/web-ui/src/lib/roster.ts:34-36`). None of the three is evidence for
+(`packages/sdk/src/types.ts:11-15`, `packages/core/src/work-state.ts:3-5`,
+`packages/cli/src/runtime/trace/work-state.ts:11-13`,
+`packages/web-ui/src/lib/roster.ts:36-38`). None of the three is evidence for
 either of the others, and the roster's published state of work is a *derivation*
 over two of them rather than a copy of what any runner said.
 
@@ -1777,7 +1809,9 @@ behind it, and every registered member appears in the roster list whether or not
 anything is connected.
 
 - **Names** — SDK `Presence`, `Presence.connected` (a count of live WebSocket
-  subscribers) · broker `PresenceRegistry` · route `GET /roster` · CLI `csuite
+  subscribers) · broker `PresenceRegistry` · route `GET /roster`,
+  `GET /team/status` → `TeamStatusMember.presence` (the same enriched record, by
+  construction — `packages/core/src/presence-enrichment.ts:63`) · CLI `csuite
   roster` column `connected` · MCP `roster` `connected=<n>` / `offline` · UI
   "ONLINE" / "OFFLINE" · docs [Presence](/docs/concepts/presence)
 - **Not** — Work state (what the agent is doing on the link; a member can be
@@ -1791,6 +1825,14 @@ anything is connected.
   `registerOrGet`, so on a long-lived socket it reads "connected at" despite the
   comment above it claiming it "reflects recent activity")
 - **Verbs** — list (`GET /roster`); register and subscribe bump `lastSeen`
+- **Decided** — D9: `/roster` and `/team/status` owe the same `Presence`, and the
+  enrichment is one function both call, over splitting the type into `Presence`
+  and `RosterPresence` (2026-09-08). The split was honest and mechanical; it
+  would have made permanent the one hole that matters most — `/team/status` is
+  the operability report, and encoding "this report cannot tell you about capture
+  health" into the type system is a decision to keep the hole and give it a name.
+  `apps/server/test/presence-shape-parity.test.ts` compares the two objects field
+  for field and pins the key set on both.
 
 The glossary's current **Presence** headword — "whether they're connected, and
 whether they're idle, working, or blocked" (`docs/concepts/glossary.mdx:78-79`) —
@@ -1829,17 +1871,21 @@ non-idle. The broker holds the last non-idle report for 30 seconds; `idle` is
 the absence of an entry, so a crashed runner lapses to `idle` rather than staying
 stuck, while a live one keeps its hold alive by heartbeat.
 
-- **Names** — SDK `WorkState`, `ActivityReport` *(D6 renames to
-  `WorkStateReport`)* · route `POST /presence/activity` *(D6 renames to
-  `/presence/work-state`)* · broker `WorkStateTracker`, `WORK_STATE_TTL_MS` ·
-  SDK client `setActivity()` · runtime `ActivitySignal`, `ActivitySource`,
-  `startActivityReporter()` · docs [Glossary](/docs/concepts/glossary)
+- **Names** — SDK `WorkState`, `WorkStateReport`, `WorkStateReportSchema` · route
+  `POST /presence/work-state` · broker `WorkStateTracker`,
+  `WorkStateTracker.getWorkState()`, `WORK_STATE_TTL_MS` · SDK client
+  `setWorkState()` · runtime `WorkStateSignal`, `WorkStateSource`,
+  `startWorkStateReporter()`, `CaptureHost.workState`
+  (`packages/cli/src/runtime/trace/work-state.ts`, `work-state-reporter.ts`) ·
+  docs [Glossary](/docs/concepts/glossary) · **deprecated for one release,
+  removed in the next minor** — `POST /presence/activity`, `ActivityReport`,
+  `ActivityReportSchema`, `Client.setActivity()`
 - **Not** — Live state (what `/roster` publishes; a `working` report never
   reaches it) · Objective status `blocked` (an objective its assignee has
   sequenced behind something — the entrenched owner of that word, rendered in
   the same caution color two components away) · Activity stream (the durable
   record of what a member did; work state is forgotten after 30 seconds) ·
-  `WorkStateTracker.isBusy()` and `ActivityReport.busy` (booleans that mean
+  `WorkStateTracker.isBusy()` and `WorkStateReport.busy` (booleans that mean
   "`working`" and cannot express `needs_input`, so any reader taking one as the
   whole signal loses the state that asks a human to look; the broker parses the
   reported `busy` and ignores it, deriving the boolean from `state`) ·
@@ -1863,35 +1909,44 @@ otherwise — in which case the field is omitted. A runner that reports `working
 and does nothing else reads `idle` on the roster; that is deliberate, so that
 scheduling telemetry can never make a member look capable.
 
-- **Names** — SDK `Presence.activity` *(D6 renames the wire to
-  `Presence.workState`)*, `Presence.busy`, `RosterResponse.activityWindowMs`
-  *(D6 renames to `workStateWindowMs`)* · route `GET /roster` · web
-  `presenceActivity()` · UI "WORKING" / "NEEDS INPUT", a11y "working" / "needs
-  input" · docs [Presence](/docs/concepts/presence)
+- **Names** — SDK `Presence.workState`, `Presence.busy`,
+  `RosterResponse.workStateWindowMs` · route `GET /roster` · web
+  `presenceWorkState()` · UI "WORKING" / "NEEDS INPUT", a11y "working" / "needs
+  input" · docs [Presence](/docs/concepts/presence) · **deprecated for one
+  release, removed in the next minor** — `Presence.activity` and
+  `RosterResponse.activityWindowMs`, emitted with the same values as their
+  successors
 - **Not** — Work state (the runner's own report; the tracker's `working` is
   input to nothing on the wire) · Proven action (the evidence `working` is
   derived from, published separately as `lastActedAt`) · Executor state (the
   ability to act, not the state of work) · Connection presence
-- **Values** — `working`: proven action within `activityWindowMs` · `blocked`
+- **Values** — `working`: proven action within `workStateWindowMs` · `blocked`
   (D7: `needs_input`): a runner report within the same window · `idle`: neither,
   and the field is absent
+- **Decided** — D9: one `Presence` shape with one population, over splitting
+  `RosterPresence` out of `Presence` (2026-09-08). See
+  [Connection presence](#connection-presence).
 
-`Presence.activity`'s own doc-comment describes it as the runner's report; the
-code has not worked that way since the projection was rewritten
-(`packages/core/src/app.ts:1366-1391`), and a test pins the current behavior
-(`apps/server/test/presence-activity.test.ts:121-144` — a `working` report
-yields `activity: undefined`). Read the derivation, not the type comment. D6
-renames the field to `Presence.workState`, which gives a derived field the
-reporter's word: the two remain separate concepts, and this entry and **work
-state** say which is which.
+The field's doc-comment used to describe it as the runner's report, which the code
+has not done since the projection was rewritten; D6 corrected the comment as well
+as the spelling, so it now calls the field "a DERIVATION, not a copy of any
+runner's report" (`packages/sdk/src/types.ts:274-286`). The derivation itself is
+`packages/core/src/presence-enrichment.ts:63-78`, and a test pins the behavior
+(`apps/server/test/presence-work-state.test.ts:126-137` — a `working` report
+yields `workState: undefined`). D6 also gave the field the reporter's word: the
+two remain separate concepts, and this entry and **work state** say which is
+which.
 
-The field also exists only on `GET /roster`: `GET /team/status` carries the
-identical `Presence` type built straight from `broker.listPresences()`, so it
-never has this field, and neither `csuite roster` nor the MCP `roster` tool
-renders it — an agent deciding who to hand work to cannot see that a teammate
-needs input. And `activityWindowMs` publishes `WORK_STATE_TTL_MS`, one constant
-doing two jobs under a third name: the tracker's report expiry and this
-projection's "acted recently" window. Tuning one moves the other.
+The field is on every route that publishes a `Presence`. `GET /roster` and
+`GET /team/status` both call `enrichPresence`
+(`packages/core/src/presence-enrichment.ts:63`) over the same registry records,
+so the derivation runs once and both projections carry it — D9. What still does
+not *render* it is the client layer: neither `csuite roster` nor the MCP `roster`
+tool draws the state, so an agent deciding who to hand work to reads it only out
+of `team_status`, which needs `members.manage`. That is D8's question, not this
+one. And `workStateWindowMs` publishes `WORK_STATE_TTL_MS`, one constant doing
+two jobs under a third name: the tracker's report expiry and this projection's
+"acted recently" window. Tuning one moves the other.
 
 ### Executor state
 
@@ -2032,9 +2087,9 @@ only one the caller sets.
 
 - **Names** — SDK `TeamStatusObjective.stalled`, `.staleSignals`,
   `TeamStatusStaleSignal`, `TeamStatusMember.stalled`, `.stalledReasons`,
-  `TeamStatusResponse.stalledAfterMs` (the window echoed back) · route `GET
-  /team/status?stalled_ms=` *(ships as `stalledMs`; D44)* · CLI `csuite team status
-  --stalled <duration>`, output `STALLED missing=…` · MCP `team_status` (`stalled`) ·
+  `TeamStatusResponse.stalledAfterMs` (the window echoed back) · route
+  `GET /team/status?stalled_ms=` · CLI `csuite team status --stalled <duration>`,
+  output `STALLED missing=…` · MCP `team_status` (`stalled`) ·
   docs [Running a team](/docs/guides/running-a-team)
 - **Not** — Objective status `blocked` (a state the assignee declares, with a
   `blockReason`; a blocked objective that is being discussed is not stalled, and an
@@ -2055,8 +2110,9 @@ only one the caller sets.
 - One judgement is spelled two ways in one response shape — `stalled` beside
   `staleSignals`, and `stalledReasons: 'objective_stale'`. `stalled` is the user-facing
   stem, and the others should follow it.
-- **Decided** — D44: query parameters are snake_case, over camelCase, so the current
-  `?stalledMs=` spelling is legacy (2026-09-03)
+- **Decided** — D44: query parameters are snake_case, over camelCase (2026-09-03);
+  executed `c555f46` (2026-09-08) — `?stalledMs=` is accepted for one release and
+  removed in the next minor
 
 ## Execution runtime
 
@@ -2406,9 +2462,9 @@ block is omitted rather than descriptor'd, so a packet carries between zero and 
   with it, and none has a kind or a descriptor; a client that reads `blocks` as the
   full inventory of a session's standing text is short by three) ·
   `persistent_context kind="…"` and `context.block.kind` (the "wire and telemetry
-  contract" the enum's own doc-comment gives as the reason the strings are pinned;
-  neither attribute exists anywhere in the tree — see the context watchdog under Fixed
-  context)
+  contract" the enum's own doc-comment once gave as the reason the strings are pinned;
+  neither attribute exists anywhere in the tree, and since D23 the pinning is grounded on
+  the wire that does — see [Context watchdog](#context-watchdog-retired))
 - **Values** — `team_context` · `role_description` · `personal_instructions` ·
   `team_process`
 
@@ -2522,14 +2578,10 @@ process renders as an explicit line — "unavailable" for a broker that sent no 
   team process) · Instruction block (one composed unit; this is the bundle they add up
   to, plus the team-process text that no substring of the prose carries) · Briefing
   (the retired protocol-v1 name for this bundle; no route, client method, type or event
-  kind uses the word — it survives only in scripts, test locals and comments) · Context
-  watchdog (four modules across three packages describe a component that detects a
-  block falling out of an agent's context mid-session and re-sends it —
-  `packages/sdk/src/types.ts:506`, `packages/core/src/instructions.ts:51,205`,
-  `fixed-context.ts:34-46`, `packages/cli/src/runtime/context-control.ts:6`; no such
-  module, frame or `persistent_context` attribute exists in the tree, and the one
-  surviving artifact, `instructionCaptureExemptions`, is scoped by its own doc to trace
-  redaction)
+  kind uses the word — it survives only in scripts, test locals and comments) ·
+  [Context watchdog](#context-watchdog-retired) (the broker's former detectors, deleted
+  in PR #185 and, since D23, no longer described anywhere as shipping; the one surviving
+  artifact, `instructionCaptureExemptions`, is a trace-redaction scope)
 
 ### Team process
 
@@ -2686,6 +2738,41 @@ kind is a misnomer. *(defined in code only)*
   bundle, which a re-brief does not resend) · Plate (what a re-brief carries, not the
   push itself) · Agent context (what it is pushed into)
 - **Verbs** — emitted by the runner, never requested
+
+### Context watchdog *(retired)*
+
+The broker's former pair of detectors over captured LLM traffic: an objective-id
+reminder, and an instruction-block presence check that re-sent a missing block as a
+`persistent_context` message tagged with a `context.block.kind` attribute. Both were
+deleted in PR #185 (`c9e4a85`, 2026-08-12) on a measured basis — "97% of the reminder
+pushes went to members whose captures the detector could not reliably read … while the
+runner's once-per-session `context_refresh` re-brief never misfired"
+(`CHANGELOG.md:624-629`) — and the retired `context.*` diagnostic causes were swept with
+them (`apps/server/test/diagnostics-census.test.ts:138-146`). Nothing named
+`context-watchdog.ts`, `persistent_context` or `context.block.kind` exists. Recorded so
+the words are not reintroduced and so the absence reads as a decision rather than an
+omission: the broker does not police what is in an agent's context. A block that falls
+out is re-asserted at the next runner start and on codex compaction.
+
+- **Names** — none. Four source comments in `csuite-sdk`, `csuite-core` and `csuite-cli`
+  and one line of `docs/dev/trace-pipeline.mdx` described it as shipped until D23; the
+  removal is now recorded at `packages/cli/src/runtime/fixed-context.ts:52-59`
+- **Not** — `instructionCaptureExemptions` (which outlived it and is now a redaction
+  scope only: it keeps operator-authored prose readable in stored captures,
+  `packages/core/src/instructions.ts:145`) · Objective re-brief (the runner's own
+  once-per-session `context_refresh`, which is what replaced the watchdog and does ship)
+  · Context control (`POST /members/:name/context` — a verb an operator invokes, not a
+  detector) · the work-state max-age timer in
+  `packages/cli/src/runtime/trace/work-state.ts:274` and
+  `packages/cli/src/runtime/trace/hook-server.ts:340`, which is a different mechanism
+  that is also called a watchdog and is correct
+- **Consequence** — `InstructionBlockKind`'s strings are still pinned wire, on live
+  grounds: they ship as `blocks[].kind` on `GET /instructions`
+  (`packages/core/src/app.ts:1508-1512`) and inside `changed` on the
+  `kind: 'instructions'` channel event (`:1026-1028`), both covered by
+  `apps/server/test/instructions-versioning.test.ts`
+- **Decided** — D23: excise every description of the watchdog and re-ground the pinning
+  rule on the wire that exists, over reinstating the detectors (2026-09-08)
 
 ## Authentication and credentials
 
@@ -3745,8 +3832,9 @@ anywhere in code, and there is no second entity behind it.
   `notification_pending` hold that *references* delivery ids; the delivery row itself is
   updated in place) · Message (what a delivery becomes; `messageIds` lists one per member
   target or channel post) · Endpoint (the config; a delivery is one arrival at it)
-- **Verbs** — `list` (newest first; `limit` defaults to 50 and clamps to 500, cursor `before`
-  is epoch-ms — D44 respells it `before_ts`, not yet on the wire) · `replay`. Retention is a
+- **Verbs** — `list` (newest first; `limit` defaults to 50 and clamps to 500; the page
+  bound is the scalar `before_ts`, epoch-ms — D44's respelling, on the wire as of
+  `c555f46`, with `before` accepted for one release) · `replay`. Retention is a
   separate bound: `DELIVERY_RETENTION_PER_ENDPOINT` keeps the newest 1000 receipts per
   endpoint. A replay creates a **new** delivery whose `replayOf` points at the source and
   re-runs filters, template and policy; verification, dedupe and rate limiting are skipped. A
@@ -3952,8 +4040,11 @@ primary key, so a path names at most one entry. `owner` is derived from the path
   objective, which the entry outranks — the entry holds the authoritative metadata)
   · the DB row's own column names (`content_hash` on disk is `hash` on the wire,
   `mime_type` is `mimeType`; that is a mapping, not a second concept)
-- **Values** — `kind`: `file` · `directory`
-- **Verbs** — stat, list
+- **Values** — `kind`: `file` · `directory`. Every response carrying an entry
+  carries the same keys, whichever verb produced it: a `write`, `mkdir` or `mv`
+  response has the key set a `stat` of that path by that viewer returns, `canWrite`
+  included
+- **Verbs** — stat, list, write, mkdir, mv
 
 ### Member home
 
@@ -4173,23 +4264,31 @@ caller who sends it gets the `error` default and a 409 on an occupied path.
 
 ### `canWrite`
 
-The server's own answer to "may this viewer mutate this entry", sent on the entry so
-a client does not rebuild the rule: "for objective namespace entries it *cannot*: the
-owner is `obj:<id>` and the rule includes objective membership." Today it is attached
-by the read projections only — `stat`, `list`, `listShared`, `listAllFiles` — so the
-entries returned by `POST /fs/write`, `POST /fs/mkdir` and `POST /fs/mv` omit it, and
-the store's own header claiming "every entry returned to a caller carries `canWrite`"
-overstates what ships. *(defined in code only)*
+The server's own answer to "may this viewer mutate this entry", sent on the entry
+so a client does not rebuild the rule: "for objective namespace entries it
+*cannot*: the owner is `obj:<id>` and the rule includes objective membership."
+A property of the **entry**, not of the verb that produced it — every response
+carrying an `FsEntry` carries it, reads and writes alike, so a client can act on
+what it just wrote without a second round-trip. *(defined in code only)*
 
 - **Names** — SDK `FsEntry.canWrite`, `FsEntrySchema.canWrite` · core
-  `withCapability()`, `canWrite()` · route responses of `GET /fs/ls`, `GET /fs/stat`,
-  `GET /fs/shared`, `GET /fs/all`
+  `withCapability()` (`packages/core/src/files/filesystem-store.ts:382`),
+  `canWrite()` · route responses of `GET /fs/ls`, `GET /fs/stat`,
+  `GET /fs/shared`, `GET /fs/all`, `POST /fs/write`, `POST /fs/mkdir`,
+  `POST /fs/mv`
 - **Not** — `owner` (an objective-folder entry is owned by `obj:<id>` and writable by
   every member of that objective; the inference from `owner` is wrong there) ·
   permission leaf (`members.manage` is one input to the predicate, not the flag) ·
   file share (a share confers read and never write, so an entry a viewer reaches
-  only through one carries `canWrite: false`) · `false` — `undefined` means "unknown,
-  ask", which is exactly what the write routes return today
+  only through one carries `canWrite: false`) · `false` — `undefined` means "this
+  server is older than the field", and nothing else. Until D29 it also meant "this
+  verb does not send it", which a client could not tell apart
+- **Values** — `true` · `false` · absent, only from a server that predates the
+  field. On a mutation the value is always `true` today, because every write path
+  gates on the same predicate — but it is read from the predicate rather than
+  stamped, so a future write path with a different gate reports honestly
+- **Decided** — D29: apply `withCapability` on the write paths, over narrowing the
+  contract to read projections (2026-09-08)
 
 ### Filesystem fault code
 
@@ -4559,9 +4658,13 @@ the `secret:<slug>` thread tag, the `/hooks/<slug>` ingress URL, the `hook:<slug
 identity, the `<slug>__<tool>` MCP tool name.
 
 - **Names** — SDK `ChannelSlugSchema`, `ToolSourceSlugSchema`, `SecretSlugSchema`
-  (`= ToolSourceSlugSchema`), `NotificationSlugSchema` (`= ToolSourceSlugSchema`) · core
+  (`= ToolSourceSlugSchema`), `NotificationSlugSchema` (`= ToolSourceSlugSchema`), all four
+  built from one `slugSchema()` over `SLUG_PATTERN` / `SLUG_MAX_LENGTH` · SDK
+  `SLUG_PATTERN`, `SLUG_MAX_LENGTH`, `SLUG_RULE` (`csuite-sdk/protocol`, the single
+  definition) · core
   `validateSlug` (`channels.ts`), `validateSourceSlug` (`tool-sources/store.ts`),
-  `validateVariableSlug` (`variables.ts`) · routes `/channels/:slug`, `/tool-sources/:slug`,
+  `validateVariableSlug` (`variables.ts`, a wrapper that delegates to
+  `validateSourceSlug` for its `SecretsError` codes) · routes `/channels/:slug`, `/tool-sources/:slug`,
   `/secrets/:slug`, `/variables/:slug`, `/notifications/endpoints/:slug`, `/hooks/:slug` ·
   foreign reference SDK `NotificationDelivery.endpointSlug` · CLI `slug` positional
   (`requireSlug`) on `csuite tools`, `csuite secrets`, `csuite variables`,
@@ -4578,19 +4681,28 @@ identity, the `<slug>__<tool>` MCP tool name.
   a slug is unique only inside its own store) · Team slug (`slugify(team.name)` computed in
   the browser for the `/t/:team` URL prefix; nothing stores it) · Foreign identity and
   Format prefix, which are shapes a *value* takes, not identifiers of a record
-- **Values** — `^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$|^[a-z0-9]$`, 1–32 characters. That
-  grammar is written out four times: twice in zod (`ChannelSlugSchema`,
-  `ToolSourceSlugSchema`) and twice on the server (`validateSlug`, `validateSourceSlug`),
-  differing only in the error class thrown. `validateVariableSlug` is a fifth copy that
-  disagrees — 64 characters and `^[a-z0-9][a-z0-9-]*$`, which admits `foo--bar` and `foo-` —
-  under a doc-comment claiming the opposite: *"Slug grammar, matching the secrets store's"*.
-  The secrets store calls `validateSourceSlug`, the strict one, and `CreateVariableRequest`
-  validates against `SecretSlugSchema`, also the strict one, so the lenient validator governs
-  only writers that reach the store without the wire layer
+- **Values** — `^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$|^[a-z0-9]$`, 1–32 characters.
+  Written once, in `csuite-sdk/protocol` (`SLUG_PATTERN`, `SLUG_MAX_LENGTH`, `SLUG_RULE`),
+  and read by every schema, every server validator and every MCP `slug` description, whose
+  text interpolates the bound rather than restating it. It was previously written out four
+  times — twice in zod, twice on the server — with a fifth copy in the variables store that
+  disagreed: 64 characters and `^[a-z0-9][a-z0-9-]*$`, admitting `foo--bar` and `foo-`,
+  under a doc-comment claiming to match the secrets store's. Nothing on disk was ever
+  outside the strict rule, because the schema runs first on every HTTP request and no other
+  writer exists
+- **Uniqueness** — a slug is unique **within its store, never across stores**. A secret and
+  a variable may both be `git-token`; each create path checks only its own table, behind two
+  per-table unique indexes, and the change events thread separately as `secret:<slug>` and
+  `variable:<slug>`. This is why the web UI's detail routes stay per-kind: *"one
+  `/environment/:slug` route could not name either of them"*
+  (`packages/web-ui/src/lib/routes.ts:50-52`). What IS shared across the secret/variable
+  pair is envName, enforced by `findEnvRivalAnyone`
 - **Verbs** — `get`, `update`, `delete`, `bind` / `unbind` address a record by it. Only a
   channel's is itself updatable (`RenameChannelRequestSchema`, `ChannelAuditAction`'s
   `rename`); the REST reference says "Slug is immutable" on each of the other four `PATCH`
   rows
+- **Decided** — D19: one grammar for variable slugs, the strict 32 the secrets store and
+  the wire already enforce, over giving variables their own 64-character schema (2026-09-08)
 
 ### Id
 
@@ -4602,7 +4714,8 @@ millisecond — so anything naming a specific event (a correction) uses this."*
   `NotificationDelivery.id` · route `POST /notifications/deliveries/:id/replay` ·
   MCP `objectives_view` argument `id` · CLI `csuite notifications replay <deliveryId>`
 - **Not** — Slug (the human-typed, URL-facing identifier, unique per store and not across
-  stores) · `identityId` (what survives a member name being reused, not a record's key) ·
+  stores) · `identityId` (what survives a member name being reused, not a record's key —
+  and, since D32, a server-internal key rather than a published one) ·
   Source id (`ActivityEvent.sourceId`, an idempotency key naming a *foreign* record the
   runner read) · the correlation ids `requestId`, `promptId`, `turnId`, `responseId`, which
   name a moment inside one exchange rather than a stored row
@@ -4632,8 +4745,10 @@ is not a name: different grammar, no case folding, and a different uniqueness sc
 - **Not** — Slug (lowercase kebab, 1 to 32 characters, one store's address for one record;
   [Channels](/docs/concepts/channels) calls a channel's slug its "name" and is the one
   place the two words collide) · Id (opaque and machine-minted) · Identity id
-  (`Teammate.identityId` — "Names are display/lookup handles and may be explicitly reused
-  after departure; this id never is"; declared optional and emitted by nothing) · Role
+  (`LoadedMember.identityId`, `packages/core/src/members-domain.ts:29` — server-internal,
+  what offboarding keys on when a name is explicitly reused after a departure; D32 removed
+  it from the wire, so the name is the whole public handle and no response distinguishes
+  one occupant of a name from the next) · Role
   title (a display label, not a handle) · Label (a token's nickname) · Foreign identity
   (`hook:<slug>`, `csuite` — values in a `from` field shaped so they cannot be one of
   these)
@@ -4787,9 +4902,10 @@ each new surface has had to guess.
 - **Values** — `snake_case`: enum values and query parameters that cross the wire, and every
   DB column · `camelCase`: TypeScript fields and JSON request bodies · `kebab-case`:
   client-only view state · `UPPERCASE`: CLI operator output only · `dotted.lower`:
-  permission leaves · `--kebab-flag`: CLI flags. Four camelCase query parameters predate the
-  rule and are the exceptions to sweep — `parentOrigin`, `stalledMs`, `clientKind` and
-  `clientVersion`
+  permission leaves · `--kebab-flag`: CLI flags. The four camelCase query parameters that
+  predated the rule — `parentOrigin`, `stalledMs`, `clientKind`, `clientVersion` — are
+  swept; their old spellings are accepted for one release and pinned as legacy in the
+  query-parameter census
 
 ## Completeness diagnostics
 
@@ -4910,12 +5026,14 @@ callers are the broker's own tests. *(defined in code only)*
 
 An incident cause recorded for a member that no observed recovery has cleared; `Presence`
 carries the count, and the store keeps the cause and its `since`. Two web-UI surfaces
-render it — the roster row on Team Home and the member profile — and no agent-facing
-surface does, which is what the SDK's "the surface an agent reads about ITSELF" asks for
-and does not get (D45 records the gap; register #240 is where it is argued).
+render it — the roster row on Team Home and the member profile — and the only agent-facing
+surface that carries it is the MCP `team_status` tool, which needs `members.manage`, so an
+ordinary agent still cannot read the count about itself, which is what the SDK's "the
+surface an agent reads about ITSELF" asks for and does not get (D45 records the gap;
+register #240 is where it is argued).
 
-- **Names** — SDK `Presence.diagnosticsUnresolved?: number` (`packages/sdk/src/types.ts:303`, doc `:289-302`), schema `diagnosticsUnresolved` (`packages/sdk/src/schemas.ts:287`) · route `GET /roster` (`packages/core/src/app.ts:1430`, path const `packages/sdk/src/protocol.ts:25`) · DB `diagnostic_state` (`cause`, `member_name`, `since`) · core `DiagnosticStore.unresolved()` (`packages/core/src/diagnostics.ts:555`) · UI `presenceDiagnostics(p).unresolved` (`packages/web-ui/src/lib/roster.ts:86-93`), badge rendering `3 UNRESOLVED` on the profile (`packages/web-ui/src/components/MemberProfile.tsx:182-189`) and on the Team Home roster row (`packages/web-ui/src/components/TeamHome.tsx:199-207`)
-- **Not** — unexpanded permissions (`rawPermissions`, preset names and permission leaves as written on disk before expansion, `packages/core/src/members-domain.ts:21`) · a body the runner could not resolve and "forwarded unresolved" — oversized, not a regular file, or not UTF-8; that is unread, not unhealed, and it is what produces `correlator.body_ref_unreadable` · capture health, which renders beside this on both surfaces as `NO CAPTURE` and `CAPTURE UNCHECKED` (`packages/web-ui/src/components/TeamHome.tsx:196`, `:223`) and answers a different question — whether bodies reach the broker, not whether a recorded failure has healed
+- **Names** — SDK `Presence.diagnosticsUnresolved?: number` (`packages/sdk/src/types.ts:336`, doc `:322-335`), schema `diagnosticsUnresolved` (`packages/sdk/src/schemas.ts:301`) · route `GET /roster` and `GET /team/status`, both through `enrichPresence` (`packages/core/src/presence-enrichment.ts:123-129`; path consts `packages/sdk/src/protocol.ts:45,47`) · DB `diagnostic_state` (`cause`, `member_name`, `since`) · core `DiagnosticStore.unresolved()` (`packages/core/src/diagnostics.ts:575`, impl `:1169`) · UI `presenceDiagnostics(p).unresolved` (`packages/web-ui/src/lib/roster.ts:89-97`), badge rendering `3 UNRESOLVED` on the profile (`packages/web-ui/src/components/MemberProfile.tsx:187`) and on the Team Home roster row (`packages/web-ui/src/components/TeamHome.tsx:206`)
+- **Not** — unexpanded permissions (`rawPermissions`, preset names and permission leaves as written on disk before expansion, `packages/core/src/members-domain.ts:31`) · a body the runner could not resolve and "forwarded unresolved" — oversized, not a regular file, or not UTF-8; that is unread, not unhealed, and it is what produces `correlator.body_ref_unreadable` · capture health, which renders beside this on both surfaces as `NO CAPTURE` and `CAPTURE UNCHECKED` (`packages/web-ui/src/components/TeamHome.tsx:197`, `:224`) and answers a different question — whether bodies reach the broker, not whether a recorded failure has healed
 - **Values** — absent means the broker retains no diagnostics and has no opinion, never "this member is clean"; `0` is the positive statement that it looked and found none outstanding
 - **Verbs** — read on `GET /roster`; cleared only by an observed recovery
 
@@ -4926,8 +5044,8 @@ itself, stamped identically onto every member's presence row. `unknown` means it
 say — a write threw, its metadata is unreadable, or unresolved state was evicted;
 `degraded` means an overflow inside the detail window is actively shedding evidence.
 
-- **Names** — SDK `Presence.diagnosticsRetention?: 'healthy' | 'degraded' | 'unknown'` (`packages/sdk/src/types.ts:311`, doc `:304-310`), schema `diagnosticsRetention` (`packages/sdk/src/schemas.ts:288`) · core `RetentionHealth` (`packages/core/src/diagnostics.ts:272`), `DiagnosticStore.health()` (`:564`, impl `:1384`) · route `GET /roster` (`packages/core/src/app.ts:1431`) · DB `diagnostic_meta` keys `overflow_last`, `state_evicted` · UI `presenceDiagnostics(p).retention`, badge rendering `DIAGNOSTICS DEGRADED` / `DIAGNOSTICS UNKNOWN` (`packages/web-ui/src/components/MemberProfile.tsx:190-197`, `packages/web-ui/src/components/TeamHome.tsx:208-216`)
-- **Not** — capture health (`captureHealth`, genuinely per member — whether that member's bodies reach the broker — and its good value is `ok`, not `healthy`; `packages/sdk/src/types.ts:46`) · trace retention and `csuite prune-traces` (this reports on neither) · the three other SDK `degraded`s rendered near the same badge row: executor state (`types.ts:364`), a runner-condition frame (`:346`), and a message-disposition reason (`:470`) · the "durable latch" its own cause comment points at (`packages/core/src/diagnostics.ts:113-114`) — three distinct things wear that word: the in-memory availability latch `writeFailed` (`:938-947`, "IN MEMORY, deliberately"), the `retention.unavailable` bucket row written on the next successful write (`:1101-1119`), and the genuinely durable eviction latch `diagnostic_meta.state_evicted` (`:854-860`)
+- **Names** — SDK `Presence.diagnosticsRetention?: 'healthy' | 'degraded' | 'unknown'` (`packages/sdk/src/types.ts:344`, doc `:337-343`), schema `diagnosticsRetention` (`packages/sdk/src/schemas.ts:302`) · core `RetentionHealth` (`packages/core/src/diagnostics.ts:285`), `DiagnosticStore.health()` (`:584`, impl `:1404`) · route `GET /roster` and `GET /team/status` (`packages/core/src/presence-enrichment.ts:128`) · DB `diagnostic_meta` keys `overflow_last`, `state_evicted` · UI `presenceDiagnostics(p).retention`, badge rendering `DIAGNOSTICS DEGRADED` / `DIAGNOSTICS UNKNOWN` (`packages/web-ui/src/components/MemberProfile.tsx:195`, `packages/web-ui/src/components/TeamHome.tsx:215`)
+- **Not** — capture health (`captureHealth`, genuinely per member — whether that member's bodies reach the broker — and its good value is `ok`, not `healthy`; `packages/sdk/src/types.ts:46`) · trace retention and `csuite prune-traces` (this reports on neither) · the three other SDK `degraded`s rendered near the same badge row: executor state (`types.ts:397`), a runner-condition frame (`:379`), and a message-disposition reason (`:510`) · the "durable latch" its own cause comment points at — three distinct things wear that word: the in-memory availability latch `writeFailed` (`packages/core/src/diagnostics.ts:948-958`, "IN MEMORY, deliberately"), the `retention.unavailable` bucket row written on the next successful write (`:1133-1149`), and the genuinely durable eviction latch `diagnostic_meta.state_evicted` (`:866-874`)
 - **Values** — `healthy` · `degraded` — evidence is being dropped to satisfy a cap · `unknown` — reachable and load-bearing: "a store that cannot say 'I do not know' would make this signal the thing it exists to prevent, one layer down"
 - **Decided** — D54, **proposed**: broker-wide, a property of the broker repeated on every presence row, over reading `diagnosticsRetention` as a per-member fact; and `degraded` becomes `shedding` with `RetentionHealth` becoming `DiagnosticsStoreHealth`, over keeping "retention health" and a fourth claimant on `degraded` (2026-09-03). The wire, the schema and the badge still spell it `diagnosticsRetention` / `degraded`; those are the legacy spellings until the rename ships.
 
@@ -5539,25 +5657,105 @@ for the other.
 
 ### Exit code
 
-The CLI's machine contract with a shell caller or a supervisor. Four bands, three in
-the CLI and one in the container entrypoint. The published table is currently
-narrower than the behavior: `2` is documented as bad flags only, but a broker that
-cannot be reached (`RunnerStartupError`) and a missing agent binary
-(`AgentAdapterError`) are both converted to `UsageError` and also exit `2`, so a
-supervisor branching on 1-vs-2 today gets the wrong answer.
+The CLI's machine contract with a shell caller or a supervisor. Four bands, three
+in the CLI and one in the container entrypoint, and the split that carries the
+contract is "will this succeed if you run it again?": **`2` will not** — the argv
+is wrong and a typo does not fix itself — while **`1` may**, because the broker
+was down, the credential was not there yet, the disk was full. A unit with
+`Restart=always` keeps restarting on `1`; `RestartPreventExitStatus=2` is the
+supported way to stop on an operator mistake. One condition answers with one
+code from every entry point.
 
-- **Names** — CLI `fail(message, code = 1)`, `UsageError` · CLI `DoctorReport.anyFail`
-  (the only input to the 0/1 choice under `--doctor`) · container `docker/entrypoint.sh`
-  exit `64` · docs [CLI reference](/docs/reference/cli), [Deployment](/docs/deployment)
-- **Not** — Check status (`PASS | WARN | FAIL`, per check inside a doctor report; only a
-  `FAIL` reaches exit 1, `WARN` is advisory) · Fault code (a wire or stored token, never
-  a process status) · `JsonRpcError.code` (the Codex bridge's numeric protocol code,
-  unrelated to process exit)
-- **Values** — `0`: success, including a doctor report with no FAIL · `1`: runtime
-  failure · `2`: usage error, and today also startup and environment failures · `64`: a
-  refused configuration, emitted by the container entrypoint and absent from the CLI
-  table · `csuite claude` and `csuite codex` exit with the agent's own code when the
-  agent ends the session
+- **Names** — CLI `fail(message, code = 1)`, `failFrom(err)` (the single site that
+  turns a caught error into a code, `packages/cli/src/index.ts:127`) · CLI
+  `UsageError` → 2, `StartupError` → 1 (`packages/cli/src/commands/errors.ts:25,40`)
+  · CLI `DoctorReport.anyFail` (the only input to the 0/1 choice under `--doctor`)
+  · container `docker/entrypoint.sh:45` exit `64` · docs
+  [CLI reference](/docs/reference/cli), [Deployment](/docs/deployment),
+  [Stub runner](/docs/runners/stub)
+- **Not** — Check status (`PASS | WARN | FAIL`, per check inside a doctor report;
+  only a `FAIL` reaches exit 1, `WARN` is advisory) · Fault code (a wire or stored
+  token, never a process status) · `JsonRpcError.code` (the Codex bridge's numeric
+  protocol code, unrelated to process exit)
+- **Values** — `0`: success, including a doctor report with no FAIL · `1`: the
+  environment, not the invocation — network, broker error, IO, preflight FAIL, no
+  saved auth for this (broker URL, directory), a missing or broken agent binary ·
+  `2`: usage error, argv only · `64`: a refused configuration, emitted by the
+  container entrypoint · `csuite claude` and `csuite codex` exit with the agent's
+  own code when the agent ends the session. `csuite <verb> cycle`'s dispatcher
+  half is the one command with no failure code to contract about: it detaches a
+  worker and exits `0`, and the worker's code lands in
+  `~/.local/var/csuite-cycle.log`
+- **Decided** — D47: fix the code to the published table — startup and environment
+  failures exit 1 through a distinct carrier and `2` narrows to argv, over widening
+  the doc to say `2` means "usage or startup" (2026-09-08)
+
+### Usage error
+
+An invocation the CLI refuses because the argv is wrong: a bad flag, a missing
+value, two mutually exclusive options, a value that cannot be rendered into the
+file it was destined for. Carried by `UsageError` and exited as `2`. Never a
+condition about the machine — that distinction is the whole content of the class,
+and its own comment has stated it since it was written: `UsageError` exists "so
+shell callers can tell argument errors apart from runtime failures".
+*(defined in code only)*
+
+- **Names** — CLI `UsageError` (`packages/cli/src/commands/errors.ts:25`), thrown
+  by subcommand handlers and by `install-service`'s value hygiene
+  (`systemdValue`, `execStartToken`, `envAssignment` —
+  `packages/cli/src/commands/install-service.ts:62,73,84`) · CLI direct
+  `fail(msg, 2)` on an unknown argument or a flag with no value · docs
+  [CLI reference](/docs/reference/cli) exit-code table
+- **Not** — Startup error (the environment, exit 1: the same message shape, a
+  different promise about retrying) · Refusal (a policy negative the system chose;
+  a usage error is a refusal of an *invocation*, and `64` is the refusal band that
+  reaches a shell) · Check status `FAIL` (one line of a doctor report, which
+  reaches exit 1)
+- **Values** — one exit code, `2`, and nothing else reaches it
+
+### Startup error
+
+A failure of the environment rather than of the invocation: the broker cannot be
+reached, the agent binary is missing or broken, nothing is enrolled for this
+(broker URL, directory), a privileged command failed, a unit installed but its
+member never came live. The argv was fine and the machine could not carry it out,
+so every one of these can be true now and false in thirty seconds — which is why
+they exit `1` and a supervisor must keep restarting. *(defined in code only)*
+
+- **Names** — CLI `StartupError` (`packages/cli/src/commands/errors.ts:40`) · CLI
+  `RunnerStartupError` (`packages/cli/src/runtime/runner.ts:81`, an unreachable
+  broker) and `AgentAdapterError`
+  (`packages/cli/src/runtime/agents/adapter.ts:57`, a missing binary), both mapped
+  to it by the session driver · `install-service` and `cycle` refusals about the
+  machine · docs [CLI reference](/docs/reference/cli),
+  [Headless setup](/docs/headless-setup),
+  [Troubleshooting](/docs/troubleshooting)
+- **Not** — Usage error (argv, exit 2; until D47 these three classes were converted
+  into `UsageError`, so a broker outage reported itself as an operator typo) ·
+  Runner condition (a live self-report on a subscription that already started;
+  a startup error means the session never started) · Preflight FAIL (the doctor's
+  verdict before a session, which also exits 1 but is a report, not a thrown class)
+- **Values** — one exit code, `1`
+
+### Refused configuration
+
+A setting the software will not act on, refused loudly instead of being silently
+ignored or quietly reinterpreted. One instance ships: the container entrypoint
+exits `64` when `CSUITE_START_RUNNER=1` names a model runner, because starting
+nothing and starting something else are both worse than saying no. Published in
+the CLI's exit-code table since D47; before that it existed only in
+`docker/entrypoint.sh` and the deployment env-var table, so a caller told the
+table was exhaustive read `64` as an unknown crash.
+
+- **Names** — container `docker/entrypoint.sh:45` · docs
+  [CLI reference](/docs/reference/cli), [Deployment](/docs/deployment),
+  [Stub runner](/docs/runners/stub)
+- **Not** — Usage error (argv the CLI refuses, exit 2) · Startup error (the machine
+  was not ready, exit 1; a refused configuration is a policy answer, not a
+  condition that changes on its own) · Refusal (the superordinate — a negative the
+  system chose; this is the band of it that reaches a shell as a number)
+- **Values** — `64`, and `CSUITE_RUNNER_VERB=stub` is the documented exception the
+  container does honor
 
 ### Message level
 
@@ -5618,8 +5816,9 @@ return every row.
 
 A name/value pair on an HTTP request's query string. Query parameters are `snake_case`;
 the same knob is `camelCase` as a JSON body field or TypeScript property, and
-`kebab-case` as a CLI flag. Four wire parameters do not follow the rule yet and still
-read camelCase: `stalledMs`, `parentOrigin`, `clientKind`, `clientVersion`.
+`kebab-case` as a CLI flag. Every wire parameter follows the rule; seven retired
+spellings are still accepted for one release and are enumerated, with the route that
+accepts each, in `packages/core/test/query-parameter-census.test.ts`.
 
 - **Names** — route `POST /hooks/:slug?if_offline=&if_busy=&level=` · SDK
   `NotificationOverrides.ifOffline` · CLI `csuite notifications add --if-offline` ·
@@ -5634,7 +5833,8 @@ read camelCase: `stalledMs`, `parentOrigin`, `clientKind`, `clientVersion`.
 - **Values** — one boolean encoding, `true` and `false`. `DELETE /fs/rm?recursive=` is
   the only boolean on the query string and it also accepts `1`, an alias the SDK never
   emits; the sibling `POST /fs/mkdir` takes the same flag as a JSON boolean in the body
-- **Decided** — D44: snake_case query parameters, over camelCase (2026-09-03)
+- **Decided** — D44: snake_case query parameters, over camelCase (2026-09-03);
+  executed `c555f46` (2026-09-08), legacy spellings removed in the next minor
 
 ### Time window
 
@@ -5652,7 +5852,9 @@ the row.
   is a teammate) · `FsMoveRequest.from`/`.to` (source and destination paths; MCP `fs_mv`
   uses the same two words) · paging cursor (where the last page stopped, not which slice
   to read) · `EventLogTailOptions.since` (a core-internal lower bound that no route and
-  no SDK method exposes)
+  no SDK method exposes) · the paging cursor's `before_ts`/`after_ts` (where to resume,
+  not which slice to read — the direction split took those names, so a future rename of
+  this window must not reach for them)
 
 ### Paging cursor
 
@@ -5660,45 +5862,55 @@ The exclusive position where the previous page stopped: a `{ts, id}` pair sent a
 query parameters, both halves or neither, because *"a cursor with one half is a caller
 bug that would silently read from the start of the range"*. It is composite rather than
 scalar because *"A timestamp-only `to = ts - 1` cursor loses same-ts rows that fell
-beyond the previous page boundary"*. The shipped wire spelling is `cursor_ts` +
-`cursor_id`, accepted and validated on `/genai` even though the REST reference's line
-for that endpoint omits it.
+beyond the previous page boundary"*. **The name states the direction**, because
+direction is a property of the endpoint and not of the caller: `before_ts`/`before_id`
+on a newest-first walk, `after_ts`/`after_id` on an oldest-first one.
 
-- **Names** — route `GET /members/:name/activity?cursor_ts=<ts>&cursor_id=<id>` (also
-  `/genai`, `/telemetry`) · SDK `ListActivityQuery.cursor`, `ListGenaiQuery.cursor`,
-  `ListTelemetryQuery.cursor` · core `ListActivityFilter.before`, `GenAiQuery.after`,
+- **Names** — route `GET /members/:name/activity?before_ts=<ts>&before_id=<id>` and
+  `GET /history?before_ts=<ts>&before_id=<id>` (newest-first) ·
+  `GET /members/:name/genai`, `GET /members/:name/telemetry`
+  `?after_ts=<ts>&after_id=<id>` (oldest-first) · SDK `ListActivityQuery.cursor`,
+  `ListGenaiQuery.cursor`, `ListTelemetryQuery.cursor`, `HistoryQuery.cursor` · core
+  `ListActivityFilter.before`, `EventLogQueryOptions.before`, `GenAiQuery.after`,
   `TelemetryQuery.after` · docs [REST API](/docs/dev/rest-api)
-- **Not** — time window (`from`/`to`: which slice to read, not where to resume) ·
-  `HistoryQuery.before` (a scalar epoch-ms bound — the same job by a mechanism that
-  loses rows) · `ActivityContextControl.tokens.before`/`.after` (context size on either
-  side of a compaction, not positions in a page walk)
-- **Values** — direction is per endpoint and the shipped name states neither: activity
-  pages newest-first (core `before`), gen-AI and telemetry page oldest-first (core
-  `after`). A client that reuses the activity paging loop against `/telemetry` feeds the
-  newest row back into a forward walk and never terminates.
+- **Not** — time window (`from`/`to`: which slice to read, not where to resume; and
+  `after_ts`/`before_ts` are no longer available as window names) · `before_ts` with no
+  `before_id` (a scalar bound, and lossy — see below) ·
+  `ActivityContextControl.tokens.before`/`.after` (context size on either side of a
+  compaction, not positions in a page walk)
+- **Values** — `id` is a row id on the activity, gen-AI and telemetry reads and the
+  message's own id string on `/history`; the type differs, the mechanism does not.
+  Within a shared millisecond the order is by `id` — arbitrary where ids are random, but
+  total and stable, which is the property a complete page walk needs. `cursor_ts` /
+  `cursor_id` are accepted for one release on the three endpoints that had them.
 - **Decided** — D44: split the wire name by direction — `after_ts`/`after_id` on the
   oldest-first endpoints, `before_ts`/`before_id` on activity — over keeping one
-  `cursor_ts`/`cursor_id` with an added `order=asc|desc` (2026-09-03)
+  `cursor_ts`/`cursor_id` with an added `order=asc|desc` (2026-09-03); executed
+  `c555f46` (2026-09-08)
 
-### `before` (scalar page bound)
+### `before_ts` (scalar page bound)
 
-The single epoch-millisecond upper bound `/history` and the delivery receipts take
-instead of a composite cursor: *"Return only rows with `ts < before`. For pagination."*
-Being exclusive on `ts` alone, it drops every row that shares the page-boundary
-millisecond with the last row of the page before — the defect the composite cursor
-exists to prevent, and the pattern the web UI's thread paging uses today. It cannot be
-renamed `before_ts`: D44 gives that name to the composite cursor's timestamp half, so
-the arity would still be invisible while D46 (whether `/history` grows the composite
-cursor) is open.
+The single epoch-millisecond upper bound the delivery receipts take instead of a
+composite cursor — `ts < before_ts`. Being exclusive on `ts` alone, it drops every row
+that shares the page-boundary millisecond with the last row of the page before, so a
+receipts list is a feed to scroll rather than a ledger to enumerate. The name carries
+that arity on purpose: `before_ts` with a `before_id` beside it is a cursor, and
+`before_ts` alone is a bound. `/history` took the same lossy shape until D46 gave it the
+composite cursor; it still honors a bare `before_ts` and still loses the tie when you
+send one.
 
-- **Names** — route `GET /history?before=<ts>`,
-  `GET /notifications/endpoints/:slug/deliveries?before=<ts>` · SDK
-  `HistoryQuery.before` · core `EventLogQueryOptions.before` · docs
+- **Names** — route `GET /notifications/endpoints/:slug/deliveries?before_ts=<ts>` · SDK
+  `Client.listNotificationDeliveries({ beforeTs })`, `HistoryQuery.before`
+  (`@deprecated`) · core `NotificationsStore.listDeliveries({ beforeTs })` · docs
   [REST API](/docs/dev/rest-api)
 - **Not** — paging cursor (composite `{ts, id}`; keeps same-millisecond rows) ·
-  `ListActivityFilter.before` (core's word for that composite cursor — one word, two
-  arities) · time window `to` (inclusive, and bounds the slice rather than the page) ·
-  `ActivityContextControl.tokens.before` (a token count)
+  `ListActivityFilter.before` / `EventLogQueryOptions.before` (core's word for that
+  composite cursor) · time window `to` (inclusive, and bounds the slice rather than the
+  page) · `ActivityContextControl.tokens.before` (a token count)
+- **Values** — the bare `before` spelling is accepted for one release on both routes and
+  answers with `Deprecation: true`; removed in the next minor
+- **Decided** — D46: `/history` gets the composite cursor and the scalar bound keeps the
+  arity suffix (2026-09-08); executed `3f575da`
 
 ### `ts`
 
@@ -5713,7 +5925,7 @@ compares against. *(defined in code only)*
   `RunnerConditionFrame.at`, `RunnerTurnFrame.at`, `MessageDispositionFrame.at`,
   `channel_audit.at` (this same instant spelled `at` on IPC frames and audit rows) ·
   `TelemetryRecordRow.tsMs` and column `telemetry.ts_ms` (this same instant under a
-  third name; `?cursor_ts=` on `/telemetry` compares against it) ·
+  third name; `?after_ts=` on `/telemetry` compares against it) ·
   `TelemetryRecordRow.tsUnixNano` (*"the producer's own nanosecond stamp… `tsMs` is the
   millisecond value everything queries and sorts on"* — a different clock and
   precision, correctly named apart) · `AnthropicMessagesEntry.startedAt`/`.endedAt` (an
@@ -5763,13 +5975,13 @@ wire ends in `At`.
 An elapsed time or a window length, in milliseconds, with the unit in the name — an
 epoch-millisecond instant and a millisecond span are the same JavaScript number, and the
 suffix is what tells them apart. `GET /team/status` takes its staleness window as
-`stalledMs` and echoes it back as `stalledAfterMs`, so request and response name the
+`stalled_ms` and echoes it back as `stalledAfterMs`, so request and response name the
 same window differently.
 
 - **Names** — SDK `ActivitySessionEnd.durationMs`, `ActivityToolAction.durationMs`,
   `NotificationDeliveryPolicy.debounceMs`/`.queueTtlMs`/`.maxWaitMs`,
   `ToolSourceConfig.timeoutMs`, `TeamStatusResponse.stalledAfterMs`,
-  `RosterResponse.activityWindowMs` · route `GET /team/status?stalledMs=<ms>` · CLI
+  `RosterResponse.workStateWindowMs` · route `GET /team/status?stalled_ms=<ms>` · CLI
   `csuite team status --stalled 30m` · MCP `team_status` argument `stalled` · core
   `CaptureHealthOptions.graceMs`
 - **Not** — `ActivityLlmExchange.duration` (the same unit in the same union with the
@@ -5944,7 +6156,7 @@ role summary in `--instructions` hides it from the teammates who route work.
 - [Authenticator secret](#authenticator-secret) (Authentication and credentials)
 - [Baseline](#baseline) (Access and authority)
 - [Bearer token](#bearer-token) (Authentication and credentials)
-- [`before` (scalar page bound)](#before-scalar-page-bound) (Wire conventions)
+- [`before_ts` (scalar page bound)](#before_ts-scalar-page-bound) (Wire conventions)
 - [Bind / unbind](#bind--unbind) (Action verbs)
 - [Bootstrap member](#bootstrap-member) (Access and authority)
 - [Bounded reason](#bounded-reason) (Failure and error)
@@ -5973,6 +6185,7 @@ role summary in `--instructions` hides it from the teammates who route work.
 - [Composed instructions hash](#composed-instructions-hash) (Standing context)
 - [Connection presence](#connection-presence) (Live state)
 - [Context control](#context-control) (Execution runtime)
+- [Context watchdog *(retired)*](#context-watchdog-retired) (Standing context)
 - [Coverage floor](#coverage-floor) (Completeness diagnostics)
 - [Create](#create) (Action verbs)
 - [`createdAt`](#createdat) (Wire conventions)
@@ -6093,6 +6306,7 @@ role summary in `--instructions` hides it from the teammates who route work.
 - [`receivedAt`](#receivedat) (Wire conventions)
 - [Redelivery](#redelivery) (Conversation and delivery)
 - [Refusal](#refusal) (Failure and error)
+- [Refused configuration](#refused-configuration) (Failure and error)
 - [Registered secret value](#registered-secret-value) (Provisioned environment)
 - [Relationship bypass](#relationship-bypass) (Access and authority)
 - [Request template](#request-template) (Tool sources, custom tools and MCP)
@@ -6123,6 +6337,7 @@ role summary in `--instructions` hides it from the teammates who route work.
 - [Slug](#slug) (Identifiers and naming)
 - [Sole-holder invariant](#sole-holder-invariant) (Access and authority)
 - [Stalled](#stalled) (Live state)
+- [Startup error](#startup-error) (Failure and error)
 - [Status](#status) (Identifiers and naming)
 - [System actor](#system-actor) (Conversation and delivery)
 - [Team](#team) (Topology and product surfaces)
@@ -6154,6 +6369,7 @@ role summary in `--instructions` hides it from the teammates who route work.
 - [Update](#update) (Action verbs)
 - [Upload / download](#upload--download) (Action verbs)
 - [Upstream MCP server](#upstream-mcp-server) (Tool sources, custom tools and MCP)
+- [Usage error](#usage-error) (Failure and error)
 - [User code](#user-code) (Authentication and credentials)
 - [Variable](#variable) (Provisioned environment)
 - [Verb](#verb) (Action verbs)
