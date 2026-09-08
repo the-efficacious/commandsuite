@@ -194,7 +194,7 @@ absent `diagnosticsUnresolved` means *this broker retains no diagnostics*,
 never "this member is clean". A route that quietly omitted them would be
 making a claim, not leaving a gap.
 
-Each presence row carries `workState` and, for one release, the pre-D6
+Each presence row carries `workState` and, for one release, the previous
 `activity` field with the same value; `workStateWindowMs` is likewise
 mirrored by `activityWindowMs`. Both deprecated spellings are removed in
 the next minor — read `workState` and `workStateWindowMs`.
@@ -1344,7 +1344,7 @@ the record.
 | **Body** | identical to `POST /presence/work-state` |
 | **Returns** | `204`, plus `Deprecation: true` and `Link: </presence/work-state>; rel="successor-version"` |
 
-The pre-D6 spelling. The broker serves it with the same handler for one
+The previous spelling. The broker serves it with the same handler for one
 release, so an un-upgraded runner keeps reporting; every request also
 writes one `deprecated route` warn line naming the member, so a client
 still on this path can be found in a broker or proxy log. **Removed in

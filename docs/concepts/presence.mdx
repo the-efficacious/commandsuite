@@ -107,7 +107,7 @@ the **activity stream**, the durable record of what a member actually did —
 see [Activity and traces](/docs/concepts/activity-and-traces). Runners report
 work state to `POST /presence/work-state`; the roster publishes its
 projection as `Presence.workState` inside `RosterResponse.workStateWindowMs`.
-The pre-D6 spellings (`POST /presence/activity`, `Presence.activity`,
+The previous spellings (`POST /presence/activity`, `Presence.activity`,
 `activityWindowMs`) are still served and still emitted, with the same values,
 for one release; the old route answers `Deprecation: true` and all three are
 removed in the next minor.

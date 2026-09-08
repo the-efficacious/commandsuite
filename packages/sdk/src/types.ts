@@ -178,7 +178,7 @@ export interface Team {
   /**
    * @deprecated Accepted when reading data from preset-era servers. Current
    * servers omit this field, no current server writes a preset — the write
-   * path was deleted in D11 — and current clients must not present it.
+   * path is gone — and current clients must not present it.
    */
   permissionPresets?: PermissionPresets;
 }
@@ -207,8 +207,8 @@ export interface Teammate {
   /**
    * The member's name IS its public handle. There is no published
    * member identity beside it: the broker keeps a stable internal
-   * identity id for offboarding, and deliberately does not project it
-   * (D32). A client that needs to survive an explicit post-departure
+   * identity id for offboarding, and deliberately does not project it.
+   * A client that needs to survive an explicit post-departure
    * name reuse cannot detect one from this type — by decision, not by
    * omission.
    */
@@ -286,7 +286,7 @@ export interface Presence {
    */
   workState?: WorkState;
   /**
-   * @deprecated The pre-D6 spelling of {@link Presence.workState}.
+   * @deprecated The previous spelling of {@link Presence.workState}.
    *
    * Emitted with the same value as `workState` for one release so
    * clients written against the old wire keep working; removed in the
@@ -445,7 +445,7 @@ export interface WorkStateReport {
 }
 
 /**
- * @deprecated The pre-D6 name of {@link WorkStateReport}. Structurally
+ * @deprecated The previous name of {@link WorkStateReport}. Structurally
  * identical, kept for one release so a consumer typed against the old
  * name still compiles; removed in the next minor.
  */
@@ -642,7 +642,7 @@ export interface RosterResponse {
    */
   workStateWindowMs?: number;
   /**
-   * @deprecated The pre-D6 spelling of
+   * @deprecated The previous spelling of
    * {@link RosterResponse.workStateWindowMs}. Emitted with the same
    * value for one release; removed in the next minor.
    */

@@ -127,7 +127,7 @@ describe('event log reads', () => {
 
   it('drops a narrow index left by an older schema', () => {
     // The migration itself, driven: put a database back into its
-    // pre-D46 shape — narrow index present, wide one absent — and
+    // earlier shape — narrow index present, wide one absent — and
     // reopen the store over it.
     const legacy = openDatabase(':memory:');
     new SqliteEventLog(legacy);

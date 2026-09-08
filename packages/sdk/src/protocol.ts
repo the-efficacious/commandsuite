@@ -111,7 +111,7 @@ export const PATHS = {
   // reset the member to idle mid-turn.
   presenceWorkState: '/presence/work-state',
   /**
-   * @deprecated The pre-D6 spelling of {@link PATHS.presenceWorkState}.
+   * @deprecated The previous spelling of {@link PATHS.presenceWorkState}.
    *
    * `activity` is reserved for the durable per-member stream
    * (`/members/:name/activity`); the live `idle`/`working`/`blocked`

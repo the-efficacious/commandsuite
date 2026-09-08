@@ -1,5 +1,5 @@
 /**
- * The behavioural half of the D44/D46 query-parameter grammar.
+ * The behavioural half of the query-parameter grammar.
  *
  * Three properties, and each one is a different way the change could
  * have been shipped broken:

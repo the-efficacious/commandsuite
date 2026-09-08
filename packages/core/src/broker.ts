@@ -9,7 +9,7 @@
  * `csuite serve`) — the thing an operator restarts. This class is ONE
  * component that process constructs at boot, beside the stores, the
  * listeners and the route table, and its concept is the **presence
- * broker**. The class identifier stays `Broker` (D31); prose here must
+ * broker**. The class identifier stays `Broker`; prose here must
  * not, because both live in the same file at `apps/server/src/run.ts`.
  *
  * Identity model: every authenticated caller is a member with a

@@ -46,7 +46,7 @@ describe('the rest of the API surface still resolves', () => {
     '/otlp/v1/logs',
     '/fs/objective/x',
     '/presence/work-state',
-    // The pre-D6 spelling, served for one release. It has to stay
+    // The previous spelling, served for one release. It has to stay
     // claimed for exactly as long as it is routed: an un-upgraded
     // runner whose POST fell through to the SPA would read a 200 with
     // `index.html` and conclude its report landed.

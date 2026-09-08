@@ -2,12 +2,12 @@
 /**
  * Holds the docs to the vocabulary the code actually ships.
  *
- * The 2026-09-02 audit found the permission leaves enumerated three times
- * in three different documents, with eleven, twelve and thirteen entries,
- * under prose calling them "Twelve". Nothing was wrong with any single
- * edit: a page needed a list, the author wrote the list they knew, and no
+ * The permission leaves were once enumerated three times in three
+ * different documents, with eleven, twelve and thirteen entries, under
+ * prose calling them "Twelve". Nothing was wrong with any single edit: a
+ * page needed a list, the author wrote the list they knew, and no
  * instrument compared the three. `PERMISSIONS` in `csuite-sdk` is the only
- * authority, and D14 settles that exactly one document enumerates it.
+ * authority, and exactly one document enumerates it.
  *
  * Three checks, in the order a reader would notice them failing:
  *
@@ -29,7 +29,7 @@ import { join, relative, resolve } from 'node:path';
 
 const ROOT = resolve(process.argv[2] ?? join(import.meta.dirname, '..'));
 
-/** The document allowed to enumerate the leaves (D14). */
+/** The document allowed to enumerate the leaves. */
 const CANONICAL = 'docs/concepts/permissions.mdx';
 /** Where `PERMISSIONS` is declared. */
 const SOURCE = 'packages/sdk/src/types.ts';
@@ -161,7 +161,7 @@ for (const file of docFiles()) {
         'enumeration',
         file,
         `enumerates ${distinct.size} leaves near line ${hits[i].line}. ` +
-          `Only ${CANONICAL} enumerates them (D14); link to it instead.`,
+          `Only ${CANONICAL} enumerates them; link to it instead.`,
       );
       break;
     }
@@ -176,8 +176,6 @@ for (const file of [...docFiles(), 'README.md']) {
   } catch {
     continue;
   }
-  // The decision log explains the drift by quoting the counts it ended.
-  if (file === 'docs/dev/ontology-decisions.mdx') continue;
   for (const [i, line] of text.split('\n').entries()) {
     // A number inside a code span is a line number in a citation, never
     // prose counting a set.

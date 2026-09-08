@@ -17,7 +17,7 @@ import { z } from 'zod';
 export interface LoadedMember extends Member {
   /**
    * Stable member identity — SERVER-INTERNAL, and deliberately not
-   * projected onto any wire type (D32). Names are display/lookup
+   * projected onto any wire type. Names are display/lookup
    * handles and may be explicitly reused after a departure; this id
    * never is, and offboarding keys on it. It is not a published fact:
    * `Teammate` declares no `identityId`, no projection emits one, and
@@ -139,8 +139,8 @@ export function validateTotpSecret(secret: string): void {
  * Validate a legacy permission preset's name and leaves.
  *
  * Retained as a published helper for reading pre-consolidation data —
- * it has had no production caller since D11 deleted the preset write
- * path, because nothing in the product writes a preset any more. Use it
+ * it has had no production caller since the preset write path was
+ * deleted, because nothing in the product writes a preset any more. Use it
  * to check a row an older broker left behind, not to author one.
  */
 export function validatePermissionPreset(name: string, leaves: readonly Permission[]): void {

@@ -1,5 +1,5 @@
 /**
- * `GET /history` enumerates a shared millisecond. (D46 / defect #256.)
+ * `GET /history` enumerates a shared millisecond.
  *
  * The failure this exists to prevent is not "the page is in the wrong
  * order" — it is that messages became UNREACHABLE. `/history` paged on a
@@ -168,7 +168,7 @@ describe.each(BACKENDS)('GET /history composite cursor ($name)', ({ make }) => {
 
     expect(seen).toEqual(['m-c', 'm-older']);
     // Two of four. `m-b` and `m-a` are reachable by no value of the
-    // scalar bound, which is the whole of defect #256.
+    // scalar bound, which is the whole of the defect.
     expect(seen).not.toContain('m-b');
     expect(seen).not.toContain('m-a');
   });

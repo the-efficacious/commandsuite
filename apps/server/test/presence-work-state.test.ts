@@ -3,7 +3,7 @@
  *
  * Pins:
  *   - Bearer-auth subscriber can report a work state and it surfaces
- *     on `/roster` as `connected[i].workState`, the D6-deprecated
+ *     on `/roster` as `connected[i].workState`, the deprecated
  *     `activity` twin, and the lossy `busy` mirror
  *     (busy === workState === 'working').
  *   - `blocked` surfaces distinctly and reads as NOT busy.
@@ -14,7 +14,7 @@
  *     roster read.
  *   - Member deletion forgets any pending work-state entry.
  *
- * The pre-D6 `/presence/activity` path is covered separately by
+ * The previous `/presence/activity` path is covered separately by
  * `presence-work-state-compat.test.ts`, which is the file that holds
  * the two routes to the same answer.
  */
@@ -142,8 +142,8 @@ describe('POST /presence/work-state', () => {
     });
     const body = (await roster.json()) as RosterResponse;
     expect(body.workStateWindowMs).toBe(WORK_STATE_TTL_MS);
-    // D6 compat window: the pre-D6 spelling carries the same number
-    // until it is removed in the next minor.
+    // Work-state compat window: the previous spelling carries the same
+    // number until it is removed in the next minor.
     expect(body.activityWindowMs).toBe(WORK_STATE_TTL_MS);
     const alice = body.connected.find((p) => p.name === 'alice');
     // Never reported → idle → both fields absent.

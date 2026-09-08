@@ -194,10 +194,10 @@ function encryptTotpSecret(plaintext: string | null, getCipher: GetFieldCipher):
  * Legacy named bundles remain READABLE internally so preset-era member
  * rows can be resolved, but they are not part of the current Team wire
  * projection and there is no way to write one. `setPreset`,
- * `deletePreset` and `membersReferencingPreset` were deleted with D11:
- * none had a production caller, no wire shape accepts a preset name,
- * and `Team.permissionPresets` has been `@deprecated` in the SDK since
- * the consolidation. `getPresets()` and the preset branch of
+ * `deletePreset` and `membersReferencingPreset` were deleted with the
+ * write path: none had a production caller, no wire shape accepts a
+ * preset name, and `Team.permissionPresets` has been `@deprecated` in
+ * the SDK since the consolidation. `getPresets()` and the preset branch of
  * `resolvePermissions` stay, because together they are the only reason
  * an older database still loads. If operator-editable permission
  * templates are ever wanted, design them fresh rather than resurrect a

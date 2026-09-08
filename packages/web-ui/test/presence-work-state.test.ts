@@ -2,12 +2,12 @@
  * `presenceWorkState` — the single place the web shell decides how to
  * read the roster's projected state of work.
  *
- * D6 renamed the wire field `Presence.activity` to `Presence.workState`
+ * The wire field `Presence.activity` was renamed to `Presence.workState`
  * and, for one release, the broker emits both. This shell therefore has
  * to resolve THREE spellings and get their order right:
  *
  *     workState   canonical
- *     activity    the pre-D6 name, removed in the next minor
+ *     activity    the previous name, removed in the next minor
  *     busy        the older boolean, which cannot express `blocked`
  *
  * The order is the part with teeth. `busy` is lossy by construction —
@@ -36,8 +36,8 @@ describe('presenceWorkState', () => {
     expect(presenceWorkState(presence({ workState: 'idle' }))).toBe('idle');
   });
 
-  it('falls back to the pre-D6 activity field for an older broker', () => {
-    // A broker that predates D6 sends only this one. Dropping the
+  it('falls back to the previous activity field for an older broker', () => {
+    // A broker that predates the rename sends only this one. Dropping the
     // fallback would silently blank the work column for every member
     // on such a broker.
     expect(presenceWorkState(presence({ activity: 'blocked' }))).toBe('blocked');

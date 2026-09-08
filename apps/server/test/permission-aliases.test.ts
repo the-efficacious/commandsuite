@@ -259,7 +259,7 @@ describe('both member stores derive permissions from rawPermissions', () => {
 });
 
 /**
- * Legacy permission presets: read-only, and still load (D11, #21/#79).
+ * Legacy permission presets: read-only, and still load (#21/#79).
  *
  * The write path is gone — `setPreset`, `deletePreset` and
  * `membersReferencingPreset` are off `TeamStore`, asserted by

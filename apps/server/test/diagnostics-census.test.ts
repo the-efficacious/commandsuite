@@ -251,9 +251,9 @@ const APP_IN_SCOPE = [
  * they replace: invalid/refused frames cannot settle a row, and `deferred`
  * explicitly preserves it.
  *
- * 2026-09-08, +1 = 80. D44/D46 renamed the wire's query parameters and gave
- * the retired spellings a one-release compatibility window; every request
- * that uses one logs `deprecated query parameter used — update the caller`
+ * +1 = 80. The wire's query parameters were renamed and the retired
+ * spellings given a one-release compatibility window; every request that
+ * uses one logs `deprecated query parameter used — update the caller`
  * with the path and the `legacy=current` pairs.
  *
  * OPERATIONAL, not a completeness claim. It fires on a request the broker
@@ -263,9 +263,10 @@ const APP_IN_SCOPE = [
  * removed in the next minor, at which point the site goes with them.
  */
 /**
- * +1 = 81 with D6's compat window. `app.ts`'s `deprecated route` warn
- * fires when a runner still POSTs the pre-D6 `/presence/activity`; it
- * is OUT of scope for retention, and deliberately so. Nothing about it
+ * +1 = 81 with the work-state compat window. `app.ts`'s `deprecated
+ * route` warn fires when a runner still POSTs the previous
+ * `/presence/activity`; it is OUT of scope for retention, and
+ * deliberately so. Nothing about it
  * is a completeness claim: no capture is missing, no member's record
  * has a hole, and the broker did the work the caller asked for. It is
  * an operational log whose whole job is to be greppable in a proxy or

@@ -2,7 +2,7 @@
  * The query-parameter census — every name the broker reads off a query
  * string, attributed to the route that reads it.
  *
- * Why a census and not per-route assertions. D44 made query parameters
+ * Why a census and not per-route assertions. Query parameters are
  * `snake_case`, and the four camelCase survivors (`stalledMs`,
  * `clientKind`, `clientVersion`, `parentOrigin`) were not a decision —
  * they were four places nobody swept, on four routes with four separate
@@ -51,7 +51,7 @@ interface RouteQueries {
 
 /**
  * Every route that reads a query string, with the exact names it
- * accepts. Legacy names are the D44/D46 renames and are REMOVED IN THE
+ * accepts. Legacy names are the retired spellings and are REMOVED IN THE
  * NEXT MINOR — deleting a row from `legacy` here is the visible half of
  * that removal.
  */
@@ -232,7 +232,7 @@ describe('query-parameter census', () => {
   });
 
   it('spells every current parameter in snake_case', () => {
-    // The rule D44 decided, as an executable check. `stalledMs`,
+    // The rule, as an executable check. `stalledMs`,
     // `clientKind`, `clientVersion` and `parentOrigin` each failed this
     // for the life of the repository because nothing ever ran it.
     const offenders = Object.entries(CENSUS).flatMap(([label, spec]) =>
@@ -245,7 +245,7 @@ describe('query-parameter census', () => {
     // A retired spelling that is still current somewhere else cannot be
     // deleted in the next minor without breaking the route that kept
     // it, which is how a compatibility window quietly becomes permanent.
-    // `before` was exactly that until D46 gave `/history` the composite
+    // `before` was exactly that until `/history` gained the composite
     // cursor: legacy on the delivery receipts, current on `/history`.
     const current = new Set(Object.values(CENSUS).flatMap((spec) => spec.current));
     const legacy = new Set(Object.values(CENSUS).flatMap((spec) => spec.legacy));

@@ -1,8 +1,8 @@
 /**
  * Both-direction fixtures for the vocabulary check.
  *
- * The failure this file is built against is the one the audit found in the
- * artifact this check replaces: **an instrument only ever run in the
+ * The failure this file is built against is the one in the artifact this
+ * check replaces: **an instrument only ever run in the
  * direction where it agrees with its author has been tested in no
  * directions.** A suite that only runs the checker against a clean tree
  * passes identically against a checker that exits 0 unconditionally.

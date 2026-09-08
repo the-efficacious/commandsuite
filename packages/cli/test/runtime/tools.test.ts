@@ -566,7 +566,7 @@ describe('roster — old broker compatibility does not invent liveness', () => {
     expect(text).not.toContain('executor=ready');
   });
 
-  it('reads the D6 window from either spelling, preferring the new one', async () => {
+  it('reads the work-state window from either spelling, preferring the new one', async () => {
     // The compat window has the runner talking to brokers on both
     // sides of the rename. Three brokers, three answers, and the
     // middle one is the assertion that matters: when a broker sends
@@ -592,7 +592,7 @@ describe('roster — old broker compatibility does not invent liveness', () => {
     expect(await windowFor({ workStateWindowMs: 30_000, activityWindowMs: 45_000 })).toContain(
       'compatibility-window=within last 30s',
     );
-    // A pre-D6 broker that only knows the old spelling still gets a
+    // A broker that only knows the old spelling still gets a
     // real window rather than "unknown" — that is the whole point of
     // reading both.
     expect(await windowFor({ activityWindowMs: 45_000 })).toContain(

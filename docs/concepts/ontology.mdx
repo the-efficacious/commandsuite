@@ -18,24 +18,15 @@ says so and states what the code does, because the code is what ships.
 Every entry has one shape. **Names** gives that referent's spelling in each layer.
 **Not** separates it from what it is repeatedly confused with. **Values** enumerates a
 closed set, **Verbs** the operations, and **Decided** records a naming decision with the
-option it was taken over. The **Not** line is the point of the document: 318 evidenced
-confounds got into this codebase one plausible local decision at a time, and a
-distinction nobody wrote down is one that gets re-argued in the next pull request.
+option it was taken over. The **Not** line is the point of the document: every confound
+in this codebase got in one plausible local decision at a time, and a distinction nobody
+wrote down is one that gets re-argued in the next pull request.
 
-Why a term is what it is, and what it was chosen over, is recorded in
-[Ontology decisions](/docs/dev/ontology-decisions). Vocabulary only someone working *on*
-this repository meets — gates, doors, the route walk, changesets, the DCO — is out of
-scope here and belongs in a contributor glossary that does not yet exist; until it does,
-the terms this page pushes across that boundary have no home, and the Not lines that
-name them say where they belong rather than linking.
-
-The decision log's "where it is recorded" column predates these headwords, and eight of
-its pointers name a term this page settles under a different heading: D1 under
-**Objective trace**, D2 under **Member kind**, D10 under **Member binding** and
-**Request template**, D15 under **Authenticator secret**, D17 under **Resolved runner
-environment**, D25 under **Notification delivery status**, D36 under **Team role**, D54
-under **Diagnostics-store health**. The headwords here are the later and arbitrating
-ones; the log's column is the side to edit.
+Why a term is what it is, and what it was chosen over, is recorded in the
+[decision record](https://github.com/the-efficacious/commandsuite/issues/319).
+Vocabulary only someone working *on* this repository meets — gates, doors, the route
+walk, changesets, the DCO — is out of scope here and belongs in the
+[contributor glossary](/docs/dev/contributor-glossary).
 
 `*(defined in code only)*` marks a term no other prose defines. That is policy, not an
 oversight: a term belongs here if a user, an operator or an agent can encounter it — on
@@ -48,7 +39,8 @@ not. Each confound in this ontology was a locally reasonable decision: a pull re
 needed a name, no rule existed, the author picked the word that read best in the file in
 front of them, and the vocabulary forked. Eight rules close that gap. They are binding on
 new names and on renames; they do not by themselves schedule a migration of existing
-ones, which is what the [decision log](/docs/dev/ontology-decisions) is for.
+ones, which is what the
+[decision record](https://github.com/the-efficacious/commandsuite/issues/319) is for.
 
 Every example below is a live break in the tree, cited so a reviewer can check it.
 
@@ -58,10 +50,10 @@ Every example below is a live break in the tree, cited so a reviewer can check i
 route segment, an enum value, a CLI flag, an MCP tool argument, or a heading without a
 qualifier. Use the qualified alternative instead.
 
-These are the words the audit found naming four or five referents each. A qualifier costs
-one word at the call site and is the only thing that stops the next reader from resolving
-the term to the wrong subsystem — because every one of these words is already correct
-somewhere, so nothing in a code review flags the fifth use.
+These words each name four or five referents. A qualifier costs one word at the call
+site and is the only thing that stops the next reader from resolving the term to the
+wrong subsystem — because every one of these words is already correct somewhere, so
+nothing in a code review flags the fifth use.
 
 | Reserved | Say instead |
 |---|---|
@@ -70,37 +62,37 @@ somewhere, so nothing in a code review flags the fifth use.
 | session | **runner session** (one `csuite <runner>` invocation) · **web session** (the cookie-backed sign-in) · **agent session id** (the framework's own conversation id) |
 | trace | **activity stream** (the record) · **capture pipeline** (the mechanism `--no-trace` turns off) · **activity database** (the storage `prune-traces` deletes) · **exchange capture** (one LLM call) · **objective trace** (the per-objective window) |
 | transcript | **session transcript** (the runner's on-disk record of an agent session) · **thread** (a channel or DM message list) |
-| role | **team role** (`Role` — title plus prose) · **channel membership label** (`admin` / `member`) · `AnthropicMessage.role`, the provider chat turn (`system` / `user` / `assistant`) · **persona** (the route-walk tier, D36 — contributor vocabulary) |
+| role | **team role** (`Role` — title plus prose) · **channel membership label** (`admin` / `member`) · `AnthropicMessage.role`, the provider chat turn (`system` / `user` / `assistant`) · **persona** (the route-walk tier — contributor vocabulary) |
 | legacy | **read-tolerated** · **write-only residue** · **accepted-and-expanded** · **aliased** · **old-protocol peer** · **superseded implementation** · **migration source** |
-| gate | **permission gate** (the server-side check and its 403 — the one product sense) · every other sense is contributor vocabulary (D39) |
+| gate | **permission gate** (the server-side check and its 403 — the one product sense) · every other sense is contributor vocabulary |
 | endpoint | **notification endpoint** (the configured record) · **route** (an HTTP path the broker serves) |
 | capability | **permission leaf** (what a member may do) · **protocol capability** (what a peer's version supports) · **executor state** (what a member's live runners report they can do) |
 | source | **tool source** (the registry record) · **capture source** (what produces activity) · `sourceId` (the dedup key on an activity event) · **query source** (work-lane attribution) |
-| binding | **member binding** (a member↔resource grant) · **request template** (a custom tool's HTTP shape, D10) |
+| binding | **member binding** (a member↔resource grant) · **request template** (a custom tool's HTTP shape) |
 | delivery | **message delivery** (the ledger row for a pushed message) · **notification delivery** (a webhook receipt) |
 | disposition | **message disposition** (a runner's terminal acknowledgement) · **amendment disposition** (`correction` vs `scope_change` on a team-process edit) |
 
 Two of these are already settled elsewhere and are listed so the word stays reserved:
-**activity** is resolved by D6, executed in `6a2f878`: the wire now says work state, and
-the word is the durable stream's alone once the one-release shims go, and **gate**
-resolves by D39, which keeps the runtime permission check on the product side and puts
-every repository-process sense in the contributor glossary.
+**activity** is settled on the wire, which now says work state, so the word is the
+durable stream's alone once the one-release shims go; and **gate** is settled by keeping
+the runtime permission check on the product side and putting every repository-process
+sense in the contributor glossary.
 
-**Broken today.** `Team.context` (`packages/sdk/src/types.ts:164`) spends three lines of
+**Live examples.** `Team.context` (`packages/sdk/src/types.ts:177`) spends three lines of
 its own doc-comment disowning the other sense — *"Distinct from agent conversation
-context"* (`:156-158`) — because the field name cannot carry the distinction. The two
+context"* (`:171-173`) — because the field name cannot carry the distinction. The two
 permission leaves make the same collision unresolvable: `team.manage` covers team
 context and `members.context` (`packages/sdk/src/types.ts:79`) covers agent context, and
 neither name says which context it means. Elsewhere, `role` names three unrelated closed
-sets in one file — `Member.role: Role` (`:200`), `ChannelMember.role: ChannelMemberRole`
-(`:675`), `AnthropicMessage.role: string` (`:2031`) — and `legacy` marks two exact
+sets in one file — `Teammate.role: Role` (`:216`), `ChannelMember.role: ChannelMemberRole`
+(`:740`), `AnthropicMessage.role: string` (`:2103`) — and `legacy` marks two exact
 opposites: `'amended' | 'event_corrected'` are *"LEGACY READ-ONLY KINDS. No write path
-produces either"* (`:1788`) while `outcome_version` is *"LEGACY, unread. Written by the
+produces either"* (`:1859`) while `outcome_version` is *"LEGACY, unread. Written by the
 retired contract-amendment layer"* (`packages/core/src/objectives.ts:69`). One line of
 frontmatter breaks two rules at once: `docs/dev/rest-api.mdx:3` promises *"Every HTTP
 endpoint the broker exposes … permission gates"*, where **endpoint** means a route and
 **gate** means a permission check, in the same document that later says *"Management
-endpoints are dual-auth"* (`:777`) about `/notifications/endpoints`, which are records.
+endpoints are tri-auth"* (`:1013`) about `/notifications/endpoints`, which are records.
 
 ### Verb grammar
 
@@ -108,7 +100,7 @@ endpoints are dual-auth"* (`:777`) about `/notifications/endpoints`, which are r
 MCP toolbox: `post`, `get`, `list`, `create`, `update`, `delete`, `bind` / `unbind`, plus
 `set` / `delete` for a write-only value slot. A tool or command that mutates never
 carries a bare-noun name. The SDK arbitrates, because `packages/sdk/src/client.ts` is the
-least-drifted surface in the repository (D42).
+least-drifted surface in the repository.
 
 An agent reads the MCP tool list as its entire action vocabulary, and an operator reads
 the CLI usage block as theirs. When those two disagree the same operation has two names
@@ -132,8 +124,8 @@ row with a reason and a disposition), **upload** / **download** (bytes that stre
 the agent's context rather than through it), and the named lifecycle transitions
 (`complete`, `cancel`, `reassign`, `approve`, `refresh`, `replay`, `discuss`).
 
-**`rm` and `add` stay in the CLI.** D42 makes the SDK the arbiter for *tool names*, not
-for terminal ergonomics: `rm` is shell-native, the alias plumbing already accepts every
+**`rm` and `add` stay in the CLI.** The SDK is the arbiter for *tool names*, not for
+terminal ergonomics: `rm` is shell-native, the alias plumbing already accepts every
 spelling, and breaking an operator's muscle memory buys nothing an agent can read. The
 rule is that `delete` and `create` become the *documented* spellings — the ones in
 `USAGE`, in `docs/reference/cli.mdx`, and in every error message — and `rm` / `add` /
@@ -141,19 +133,19 @@ rule is that `delete` and `create` become the *documented* spellings — the one
 **Save**, **New**, **Refresh**, **Dismiss**, **Close** are button labels, not operations,
 and a button that reads `Save` may call `update` or `write`.
 
-**Broken today.** The two surfaces are exactly inverted, so no mnemonic works. MCP says
-`members_add` (`packages/cli/src/runtime/tools.ts:688`) while the CLI says
+**Live examples.** The two surfaces are exactly inverted, so no mnemonic works. MCP says
+`members_add` (`packages/cli/src/runtime/tools.ts:707`) while the CLI says
 `member create` (`packages/cli/src/commands/member.ts:44`); MCP says `members_remove`
-(`tools.ts:764`) while the CLI says `member delete` (`commands/member.ts:50`) — and every
+(`tools.ts:783`) while the CLI says `member delete` (`commands/member.ts:50`) — and every
 *other* registry inverts it back, with `tool_sources_create` beside `csuite tools add`
 (`commands/tools.ts:52`) and `tool_sources_delete` beside `csuite tools rm` (`:56`).
-Detail reads split three ways on no principle: `team_get` (`tools.ts:652`) beside five
-`_view` tools (`tools.ts:359,805,1025,1163,1385`), while `csuite secrets view`
+Detail reads split three ways on no principle: `team_get` (`tools.ts:671`) beside five
+`_view` tools (`tools.ts:378,824,1044,1182,1404`), while `csuite secrets view`
 (`commands/secrets.ts:49`) works and `csuite tools view` does not — `show` is the only
 spelling that command accepts (`commands/tools.ts:50`). And three tools that mutate carry
-bare plural nouns — `secrets_bindings` (`tools.ts:1271`), `variables_bindings` (`:1117`)
-and `tool_sources_bindings` (`:934`). The last is described in its own text as
-*"Grant or revoke members' access to a source"* (`:936`) while sitting in the tool list
+bare plural nouns — `secrets_bindings` (`tools.ts:1290`), `variables_bindings` (`:1136`)
+and `tool_sources_bindings` (`:953`). The last is described in its own text as
+*"Grant or revoke members' access to a source"* (`:955`) while sitting in the tool list
 between `tool_sources_list` and `tool_sources_view`, where a model scanning names for
 what is safe to call gets no signal that it writes.
 
@@ -171,13 +163,13 @@ it, and thirty fields already use it correctly. What the rule adds is the requir
 that the *type* be named, which is already the practice at the type level and stops at
 the field level.
 
-**Broken today.** `status` holds an HTTP status code twice on the same wire that uses
+**Live examples.** `status` holds an HTTP status code twice on the same wire that uses
 `status` for `ObjectiveStatus`: `status: number | null` on the captured Anthropic
-exchange (`packages/sdk/src/types.ts:2017`) and `status: 401` on the auth-state activity
-event (`:2631`). Both should be `httpStatus`, so `status` never means a number. In the
+exchange (`packages/sdk/src/types.ts:2089`) and `status: 401` on the auth-state activity
+event (`:2747`). Both should be `httpStatus`, so `status` never means a number. In the
 other direction, `Teammate.kind?: 'person' | 'agent'` (`:226`) declares a two-value union
 that its one derivation never completes — `memberKindFields`
-(`packages/core/src/members-domain.ts:315`) emits `'person'` or omits the field — so
+(`packages/core/src/members-domain.ts:323`) emits `'person'` or omits the field — so
 a consumer trusting the declared union waits for a value that never arrives.
 
 ### Identifiers
@@ -203,18 +195,18 @@ qualified.
 hyphen, and it earns its prefix only when a human or an agent reads it aloud. Everything
 else is a bare UUID.
 
-**Broken today.** `var_${now.toString(36)}_${…}` (`packages/core/src/variables.ts:251`)
+**Live examples.** `var_${now.toString(36)}_${…}` (`packages/core/src/variables.ts:251`)
 uses an underscore where the objective id one file over uses a hyphen —
 `` `obj-${Date.now().toString(36)}-${objectiveCounter.toString(36)}` ``
 (`packages/core/src/objectives.ts:793`) — and `variables` is the structural twin of
 `secrets`, which mints a bare UUID. The agent-facing argument names are worse: an agent
 must learn four words for "which one" — `id` for objectives
-(`packages/cli/src/runtime/tools.ts:361`), `slug` for the four registries (`:804`,
-`:1030`), `channel` for channels (`:240`), and `deliveryId` for delivery receipts
-(`:1526`). The slug grammar's second disagreement is closed: `validateVariableSlug`
+(`packages/cli/src/runtime/tools.ts:388`), `slug` for the four registries (`:832`,
+`:1050`), `channel` for channels (`:264`), and `deliveryId` for delivery receipts
+(`:1556`). The slug grammar's second disagreement is closed: `validateVariableSlug`
 (`packages/core/src/variables.ts:424`) accepted 64 characters and the pattern
 `^[a-z0-9][a-z0-9-]*$`, which permits `foo--bar` and `foo-`, under a doc-comment that
-claimed the opposite; since D19 it delegates to `validateSourceSlug` and the whole tree
+claimed the opposite; it now delegates to `validateSourceSlug` and the whole tree
 reads one `SLUG_PATTERN` / `SLUG_MAX_LENGTH` from `csuite-sdk/protocol`.
 
 ### Query parameters and cursors
@@ -223,23 +215,22 @@ reads one `SLUG_PATTERN` / `SLUG_MAX_LENGTH` from `csuite-sdk/protocol`.
 `camelCase`; CLI flags stay `kebab-case`. A paging cursor states its direction in its
 name: `after_ts` / `after_id` for an oldest-first walk, `before_ts` / `before_id` for a
 newest-first one. A scalar bound carries its arity in its name too — `before_ts`, not
-`before`. Decided as D44.
+`before`.
 
 The three-way projection already exists as a working template: `if_offline` on the query
 string, `ifOffline` in the type, `--if-offline` on the command line, documented as a
 table. Direction has to be in the name because today it is nowhere, and a client that
 reuses one endpoint's paging loop against a sibling endpoint does not terminate.
 
-**Done.** All four camelCase survivors are swept — `stalledMs` → `stalled_ms`,
-`parentOrigin` → `parent_origin`, `clientKind`/`clientVersion` →
-`client_kind`/`client_version` — and the composite cursor is split by direction:
-`before_ts`/`before_id` on the newest-first reads (`/history`,
-`/members/:name/activity`), `after_ts`/`after_id` on the oldest-first ones
-(`/members/:name/genai`, `/members/:name/telemetry`). The stores' directions are
-unchanged; only the wire grammar moved. Each retired spelling is accepted for one
-release, loses to the current name when both arrive, and answers with
+**In the tree.** The wire spells all four of the former camelCase names
+`snake_case` — `stalled_ms`, `parent_origin`, `client_kind`, `client_version` — and the
+composite cursor states its direction in its name: `before_ts`/`before_id` on the
+newest-first reads (`/history`, `/members/:name/activity`), `after_ts`/`after_id` on the
+oldest-first ones (`/members/:name/genai`, `/members/:name/telemetry`). The stores'
+directions are unchanged; only the wire grammar moved. Each retired spelling is accepted
+for one release, loses to the current name when both arrive, and answers with
 `Deprecation: true` plus `X-CSuite-Deprecated-Query: <legacy>=<current>`. The rule is
-now executable: `packages/core/test/query-parameter-census.test.ts` reads the router
+executable: `packages/core/test/query-parameter-census.test.ts` reads the router
 and pins the names every route accepts, so a camelCase parameter cannot be
 reintroduced silently.
 
@@ -265,16 +256,16 @@ duration always ends in `Ms`.
 
 The reason to keep `ts` and `receivedAt` apart is stated once in the tree and should be
 read as the family rule: *"Server receive time (epoch ms); `ts` is the capture time."*
-(`packages/sdk/src/types.ts:2188`). Capture health depends on the split, because agent
+(`packages/sdk/src/types.ts:2253`). Capture health depends on the split, because agent
 clocks differ and broker receipt is the single clock.
 
-**Broken today.** `ActivityRow.createdAt` (`packages/sdk/src/types.ts:2689`) is broker
+**Live examples.** `ActivityRow.createdAt` (`packages/sdk/src/types.ts:2762`) is broker
 receipt time wearing the entity-creation name. Its column is `created_at`
 (`packages/core/src/member-activity.ts:59`), capture health deliberately bounds on it
 rather than on `ts` — *"Capture health bounds on created_at, not ts"* (`:66`) — and a
-consumer that reads it the way `Objective.createdAt` (`types.ts:1754`) reads is looking
+consumer that reads it the way `Objective.createdAt` (`types.ts:1819`) reads is looking
 at a clock the agent never saw, off by a whole upload batch. In the same union,
-`ActivityLlmExchange.duration` (`:2413`) is documented as *"Milliseconds between request
+`ActivityLlmExchange.duration` (`:2487`) is documented as *"Milliseconds between request
 start and response end"* while its two siblings in that union spell the identical field
 `durationMs`.
 
@@ -299,20 +290,20 @@ argues for. Four rules keep the registers apart.
 Reading two surfaces and being unable to predict the shape of a third is the whole cost
 here, and it falls entirely on the client author.
 
-**Broken today.** The enrollment poll puts a machine code in the field reserved for a
+**Live examples.** The enrollment poll puts a machine code in the field reserved for a
 message — `return c.json({ error: 'authorization_pending' as const }, 400)`
-(`packages/core/src/app.ts:6042`) — and two of that route's four values describe a
+(`packages/core/src/app.ts:6292`) — and two of that route's four values describe a
 perfectly healthy poll. This one is externally mandated by RFC 8628 and is the ontology's
 single named exception; the domain layer underneath it already avoids the word, calling
 the same union `PollOutcome.kind`. On casing, `QuarantineReason = 'invalid-utf8' |
 'oversized' | 'unreadable'` (`packages/cli/src/runtime/trace/otlp-relay.ts:61`) is
-kebab-case where `RUNNER_CONDITION_CODES` (`packages/sdk/src/types.ts:332-339`) is
+kebab-case where `RUNNER_CONDITION_CODES` (`packages/sdk/src/types.ts:365-372`) is
 snake_case, for the same class of thing. And `dropped` sits on both sides of the
 loss/refusal line at once: the run summary's counter is documented as *"Events lost:
 overflow-evicted, rejected after close, or dropped at final flush"*
 (`packages/cli/src/runtime/trace/activity-uploader.ts:90`), an accident, while
 `NotificationDeliveryStatus`'s `'dropped'` is *"Every member target was offline and the
-policy said drop"* (`packages/sdk/src/types.ts:1251`), a decision. Rename the counter
+policy said drop"* (`packages/sdk/src/types.ts:1322`), a decision. Rename the counter
 **`lost`**, which is the word its own comment already uses.
 
 ### Values
@@ -325,18 +316,18 @@ crosses the wire or lands in a column is `snake_case`, full stop.
 **Records of what happened are past participle** — `completed`, `bound`, `member_added`
 — because an action record answers "what happened to this row", not "what should be
 done". Imperative values belong on requests, where the caller is asking for something.
-US spelling throughout (D34).
+US spelling throughout.
 
-**Broken today.** Three tenses live in one file. `ChannelAuditAction`
-(`packages/sdk/src/types.ts:715-722`) is imperative — `'create' | 'rename' |
+**Live examples.** Three tenses live in one file. `ChannelAuditAction`
+(`packages/sdk/src/types.ts:780-787`) is imperative — `'create' | 'rename' |
 'description' | 'member_add' | 'member_remove' | 'member_role' | 'archive'` — and two of
 its members are not actions at all: `'description'` and `'member_role'` record *which
 field changed*, inside an enum whose siblings record what happened. In the same file,
-`ObjectiveEventKind` (`:1778-1786`) is past participle — `'assigned'`, `'blocked'`,
+`ObjectiveEventKind` (`:1849-1856`) is past participle — `'assigned'`, `'blocked'`,
 `'completed'`, `'watcher_added'` — and so is `EnvironmentEvent.action`
-(`:2536`): `'value_set' | 'bound' | 'unbound'`. A consumer rendering an audit trail
+(`:2609`): `'value_set' | 'bound' | 'unbound'`. A consumer rendering an audit trail
 cannot write one formatter. These are stored values, so aligning the channel enum costs a
-migration; whether to pay it is D51.
+migration; the decision to pay it is recorded under [Action record](#action-record).
 
 ## People and seats
 
@@ -358,8 +349,8 @@ the `members` table has no kind column to separate them.
   `ListMembersResponse` · core `LoadedMember`, `MemberStore`, `SqliteMemberStore` · DB
   `members` · route `GET /members`, `POST /members`, `PATCH /members/:name`,
   `DELETE /members/:name` · CLI `csuite member list|create|update|delete` · MCP
-  `members_add` (becomes `members_create`, D42) `members_update` `members_remove`
-  (becomes `members_delete`, D42) · UI "Members" · docs
+  `members_add` (becomes `members_create`) `members_update` `members_remove`
+  (becomes `members_delete`) · UI "Members" · docs
   [Members](/docs/concepts/members)
 - **Not** — Teammate (the public projection of this same row, without `instructions`) ·
   Channel membership label value `member` (a per-channel row value, owned by
@@ -369,7 +360,7 @@ the `members` table has no kind column to separate them.
   a property of the seat, never the seat) · "Director" (no such concept — `isDirector` in
   `Transcript.tsx:49` is `permissions.includes('members.manage')`, and the word is live in
   `ObjectiveCreate.tsx:242`, six MCP tool descriptions in `packages/cli/src/runtime/tools.ts`
-  and the login placeholder `director-1`; D40 names the set by its leaf, and
+  and the login placeholder `director-1`; the set is named by its leaf, and
   `bootstrap-member-permissions.test.ts` already forbids persona nouns in the permission
   vocabulary) · "slot" (a retired synonym that is not comment-only: it reaches agents in
   the MCP roster empty state `team roster: (no slots defined)` and in the `fs_*` tool
@@ -394,10 +385,10 @@ a second kind of participant.
   holder reads from `GET /members`) · member (the seat itself — never write "teammate"
   as a bare synonym for the row) · Connection presence (live connection state for the
   same name)
-- **Decided** — D32: `identityId` leaves the wire; the member name is the whole public
-  handle, and the broker's stable identity id stays server-internal for offboarding
-  (2026-09-08). `loadedToMember` projects `kind` on the same change, so
-  `Member extends Teammate` holds on both branches of `GET /members`.
+- **Decided** — `identityId` leaves the wire; the member name is the whole public
+  handle, and the broker's stable identity id stays server-internal for offboarding.
+  `loadedToMember` projects `kind` on the same change, so `Member extends Teammate`
+  holds on both branches of `GET /members`.
 
 `Member extends Teammate` is now a wire promise, not only a type-layer one: the full
 record is the public record plus `instructions`, and every field `Teammate` declares is
@@ -439,8 +430,8 @@ nothing else is consulted.
   `apps/server/test/teammate-kind.test.ts` pins "absent, not `'agent'`", and
   `apps/server/test/member-projection-parity.test.ts` pins that both branches of
   `GET /members` agree about it.
-- **Decided** — D2: `kind` is a heuristic over the auth plane and is named for what it
-  measures, over promoting person/agent to a stored `members.kind` column (2026-09-03)
+- **Decided** — `kind` is a heuristic over the auth plane and is named for what it
+  measures, over promoting person/agent to a stored `members.kind` column
 
 ### Team role
 
@@ -470,8 +461,8 @@ publicly in the roster and in every member's instruction packet. It is descripti
   "qa-lead", "researcher" are the doc-comment's examples, not a set ·
   `description`: freeform prose, no upper bound, defaults to `''`
 - **Verbs** — update
-- **Decided** — D36: route-walk's `--role` becomes `--persona`, over keeping `--role`
-  and disambiguating it in prose (2026-09-03). The flag is a contributor script fixture
+- **Decided** — route-walk's `--role` becomes `--persona`, over keeping `--role`
+  and disambiguating it in prose. The flag is a contributor script fixture
   with no wire, database or published-CLI cost, and freeing the word is the point.
 
 ### Roster
@@ -485,7 +476,7 @@ when deciding whether a work-state report is recent.
 - **Not** — the `members` table (storage; its own comment calls itself "roster" and
   should not) · `GET /members` (the management list — full `Member` records for a
   `members.manage` holder, with no presence attached) · `GET /team/status` (per-member
-  objectives and stall verdicts, carrying the identical `Presence` since D9 — the
+  objectives and stall verdicts, carrying the identical `Presence` — the
   difference is the objective and stall layer, not the presence shape) · Connection
   presence (live connection state on its own)
 - **Verbs** — list
@@ -504,7 +495,7 @@ responsibility, not the shell's.
   (a `LoadedMember` on the server request context)
 - **Not** — Client identity (`ClientIdentity` / `RunnerIdentity` — observational facts a
   subscriber reports, which never authorize) · Identity id (the stable member id —
-  server-internal by decision since D32, not merely unemitted) · Member (the stored row;
+  server-internal by decision, not merely unemitted) · Member (the stored row;
   `Identity` is a client-side resolved copy of part of it)
 
 ### Client identity
@@ -549,7 +540,7 @@ members or shape the team itself are permissions." `PERMISSIONS` in
 `PermissionLeafSchema` and the CLI's leaf list derive from it, and a parity test
 holds `PERMISSION_META` to it. The prose lists did not derive from it and had
 drifted three ways, each page listing a different set under a heading that
-counted a third. Under D14 exactly one docs table survives — the one in
+counted a third. Exactly one docs table survives — the one in
 [Permissions](/docs/concepts/permissions) — and `scripts/check-vocabulary.mjs`
 holds it to `PERMISSIONS`, refuses a second enumeration anywhere in `docs/`, and
 refuses prose that names a count at all.
@@ -558,7 +549,7 @@ refuses prose that names a count at all.
   `PermissionsSchema` · core `PermissionLeafSchema` · DB JSON strings inside
   `members.raw_permissions` · route literal arguments to `hasPermission` · CLI
   `csuite member create --permissions <leaf,...>` · MCP `members_add`
-  (D42: becomes `members_create`) and `members_update`, field `permissions`
+  (becomes `members_create`) and `members_update`, field `permissions`
   ("Permission leaves.") · UI checkbox grid built from `PERMISSION_META`; the
   member profile renders each held leaf as a badge whose tooltip is `labelFor`
   · docs [Permissions](/docs/concepts/permissions)
@@ -571,18 +562,18 @@ refuses prose that names a count at all.
   copy an agent reads, which means "holds `members.manage`" and is not a
   category
 - **Values** — `PERMISSIONS`, enumerated once in
-  [Permissions](/docs/concepts/permissions) and nowhere else (D14). Three of the
+  [Permissions](/docs/concepts/permissions) and nowhere else. Three of the
   names understate what they grant, and those glosses live here:
   `members.context` is control over *another* member's runner context, since
   doing it to your own is baseline; `objectives.create` grants creating **and**
-  reading the team-wide objective ledger — as of D3 `members.manage` reads the
+  reading the team-wide objective ledger — `members.manage` reads the
   same ledger without the authoring rights; and rows written before the rename
   still say `process.manage`, which resolves to `team_process.manage`
 - **Verbs** — granted by writing the whole list on `POST /members` or
   `PATCH /members/:name`; checked with `hasPermission`; never granted
   individually
-- **Decided** — D40: name the set by the leaf, "`members.manage` holder", over
-  reviving "Director" (or "admin") as the informal noun for it (2026-09-03)
+- **Decided** — name the set by the leaf, "`members.manage` holder", over
+  reviving "Director" (or "admin") as the informal noun for it
 
 ### Resolved permissions
 
@@ -669,7 +660,7 @@ referenced by name inside a member's raw permissions and expanded on every read.
 "Legacy named bundles retained only to read teams created by older versions."
 Read-only, and never re-opened: no shipped surface can create, edit or delete one
 — there is no REST route, CLI command, MCP tool or wizard, the wire refuses a
-preset name by construction, and since D11 the store has no write method either.
+preset name by construction, and the store has no write method either.
 They exist so a database written before the flat leaf model still loads; a
 current broker reports none.
 
@@ -688,9 +679,9 @@ current broker reports none.
   `apps/server/test/permission-preset-boundary.test-d.ts` fails the build if one
   returns. Never call any of this a "bundle" — that word is the third name for
   this row and is retired
-- **Decided** — D11: read-only compatibility, never re-opened — delete the write
+- **Decided** — read-only compatibility, never re-opened — delete the write
   path and keep `getPresets()` with the resolution branch, over re-opening the
-  feature with routes and a wire shape that accepts preset names (2026-09-08)
+  feature with routes and a wire shape that accepts preset names
 
 ### Creation template
 
@@ -940,8 +931,9 @@ objectives.ts:13-16`). The same four values are literal in the SDK type, the SQL
 - **Not** — `open` (not a status: the `active`+`blocked` union, accepted as a fifth
   value by `objectives_list.status` and applied client-side because the wire enum has
   four — see Plate) · Stalled (a derived silence verdict, not a stored state) · Work
-  state (`WorkState` — the runner's live agent state, a different family; under D6 the
-  wire field is still spelled `Presence.activity`, `packages/sdk/src/types.ts:264`) ·
+  state (`WorkState` — the runner's live agent state, a different family; the wire field
+  is `Presence.workState`, with `Presence.activity` beside it for one release,
+  `packages/sdk/src/types.ts:287,296`) ·
   "Closed" (the UI's collapsed `done`+`cancelled` section in `ObjectivesPanel`; the
   permission leaf's word "ledger" means the team-wide list of all objectives, not that
   section)
@@ -1035,7 +1027,7 @@ them read **and** write on `/objectives/<id>/` through the objective-membership 
   "Watchers", "Initial watchers (optional)" · permission `objectives.watch` · docs
   [Objectives](/docs/concepts/objectives), [Files](/docs/concepts/files)
 - **Not** — `members.manage` holder (an implicit member of every objective thread —
-  pushed its events, able to post, and, since D3, able to read the objective —
+  pushed its events, able to post, and able to read the objective —
   deliberately absent from this list; the UI create screen calls them "Directors"
   (`packages/web-ui/src/components/ObjectiveCreate.tsx:242`), a word that exists nowhere
   else in the product and should not be learned — the detail screen one component over
@@ -1050,16 +1042,17 @@ them read **and** write on `/objectives/<id>/` through the objective-membership 
   `POST /objectives/:id/reassign` (`packages/core/src/app.ts:4723`).
 - The write grant is documented, but not where a reader looks first:
   [Files](/docs/concepts/files) states "full read-and-write access"
-  (`docs/concepts/files.mdx:50-52`) while the glossary still says a watcher is added
-  "to observe it" (`docs/concepts/glossary.mdx:164-166`). Whether write is intended is a
-  maintainer decision; the ontology records the grant the code makes.
+  (`docs/concepts/files.mdx:50-52`) while the SDK's own route comment says
+  "assignees execute, watchers observe" (`packages/sdk/src/protocol.ts:59`). Whether
+  write is intended is a maintainer decision; the ontology records the grant the code
+  makes.
 
 ### Objective party
 
 The stored relationship: `{assignee, originator, watchers}`. This is the predicate the
 list route answers as `related` and the filesystem ACL calls membership of the objective
 — one set, computed identically in two places under two names. The objective-detail read
-gate no longer tests it: since D3 that gate tests the thread audience.
+gate no longer tests it: that gate tests the thread audience.
 *(defined in code only)*
 
 - **Names** — core `relatedTo` (`packages/core/src/app.ts:4577-4580`),
@@ -1068,13 +1061,13 @@ gate no longer tests it: since D3 that gate tests the thread audience.
   · SDK `ListObjectivesQuery.related` ("assigned, originated, or watching") · query
   `GET /objectives?related=`
 - **Not** — Thread audience (this set plus every `members.manage` holder — the push
-  fan-out, the `/discuss` gate **and, since D3, the read gate**, which is strictly
+  fan-out, the `/discuss` gate **and the read gate**, which is strictly
   wider) · Watchers (one of the three terms, not the set) · Plate (the assignee term
   alone). A member's **related objectives** are the objectives they are a party to; that
   is the symmetrical name, and it is the wire's.
-- **Decided** — D3: widen the objective read gate to the thread audience;
+- **Decided** — widen the objective read gate to the thread audience;
   `GET /objectives/:id` and `GET /objectives` admit `members.manage` holders, and the
-  403 names the predicate the gate tests (2026-09-08).
+  403 names the predicate the gate tests.
 
 ### Thread audience
 
@@ -1102,8 +1095,8 @@ function's own doc-comment still names was folded into `PATCH /objectives/:id`.
   agents the thread members are "the originator, the assignee, and all directors on the
   team" (`packages/cli/src/runtime/tools.ts:449`) and omits watchers entirely; the
   code includes them, and the code is right.
-- **Decided** — D3: this set, not the objective party, is the read audience for an
-  objective (2026-09-08).
+- **Decided** — this set, not the objective party, is the read audience for an
+  objective.
 
 ### Objective event
 
@@ -1183,11 +1176,11 @@ runs to the current moment. *(defined in code only)*
   `packages/web-ui/src/components/ObjectiveDetail.tsx:402` · route
   `GET /members/:name/activity?from=&to=` with `from = createdAt` · UI the "Trace" panel
   on the objective page
-- **Not** — Objective trace (the marker-bounded per-stint slice the glossary, the docs, the SDK and
+- **Not** — Objective trace (the marker-bounded per-stint slice the docs, the SDK and
   the activity store all define: "the slice of the assignee's activity between the moment
   an objective opened for them and the moment it closed",
-  `docs/concepts/activity-and-traces.mdx:91-93`; `docs/concepts/glossary.mdx:156-157`;
-  `packages/sdk/src/types.ts:2286-2288`) · Activity marker (`objective_open` /
+  `docs/concepts/activity-and-traces.mdx:91-93`;
+  `packages/sdk/src/types.ts:2359-2361`) · Activity marker (`objective_open` /
   `objective_close`, which bound the trace and which this window ignores) · Member
   timeline (`clipToObjective` / `clipCallsToObjective`,
   `packages/web-ui/src/components/AgentTimeline.tsx:426-448,479-497` — the marker-based
@@ -1196,7 +1189,7 @@ runs to the current moment. *(defined in code only)*
   captured exchange the *current* assignee logged over the objective's whole calendar
   life. After a reassignment the docs' promise that "each assignee's trace covers their
   own stint" (`docs/concepts/activity-and-traces.mdx:99-100`) is false of this panel.
-  D1 settles which window the word names — the marker window — so this panel is a defect
+  The word names the marker window, so this panel is a defect
   and not a second sense of "trace": do not cite the word for what the objective page
   renders.
 
@@ -1232,8 +1225,8 @@ name it, four independent sites re-implement the equivalence between them, and
 one of those four lives in raw SQL.
 
 - **Names** — core `GENERAL_CHANNEL_ID` (declared in the event log), `GENERAL_CHANNEL_SLUG` (declared in the channel store, importing the id) · wire tag `data.thread = 'chan:general'`, **or** no tag at all with `to: null` · web UI `PRIMARY_THREAD` = `'primary'`, aliased as `GENERAL_THREAD` · UI "#general" in the nav, "#team" in a toast, "Team Chat" in an inbox row, "◇ Net is quiet" as the empty state · docs [Channels](/docs/concepts/channels)
-- **Not** — Channel, in the parts that make a channel a channel: general cannot be joined, left, renamed, archived, or given member rows, and `isMember` is always true for it · Broadcast (the routing path general's pushes take, not a second destination) · `primary` (a browser-local map and unread key that never leaves the client and is not a wire value) · Default feed (the unscoped `GET /history`, which is wider than this channel; the unscoped MCP `recent` is **not** — since D4 it reads this channel)
-- **Values** — a message is in general when `data.thread` is `chan:general` **or** when `to` is null and `data.thread` is absent. The MCP `broadcast` tool, the web-UI composer and `csuite push --broadcast` all emit the untagged form; only the external-notification dispatcher emits `chan:general`. The four sites that collapse the two forms are `queryGeneralStmt` (SQL), `matchesChannel` (in-memory log), `threadKeyOf` (web UI) and `extractChannelId` (runner forwarder). Since D5 the general read is also audience-aware: `queryGeneralStmt` and `matchesChannel` collect the two forms, and a row carrying a recorded delivery audience is then shown only to that audience and its sender — general's membership is implicit, so nothing else gates it.
+- **Not** — Channel, in the parts that make a channel a channel: general cannot be joined, left, renamed, archived, or given member rows, and `isMember` is always true for it · Broadcast (the routing path general's pushes take, not a second destination) · `primary` (a browser-local map and unread key that never leaves the client and is not a wire value) · Default feed (the unscoped `GET /history`, which is wider than this channel; the unscoped MCP `recent` is **not** — it reads this channel)
+- **Values** — a message is in general when `data.thread` is `chan:general` **or** when `to` is null and `data.thread` is absent. The MCP `broadcast` tool, the web-UI composer and `csuite push --broadcast` all emit the untagged form; only the external-notification dispatcher emits `chan:general`. The four sites that collapse the two forms are `queryGeneralStmt` (SQL), `matchesChannel` (in-memory log), `threadKeyOf` (web UI) and `extractChannelId` (runner forwarder). The general read is also audience-aware: `queryGeneralStmt` and `matchesChannel` collect the two forms, and a row carrying a recorded delivery audience is then shown only to that audience and its sender — general's membership is implicit, so nothing else gates it.
 
 The web UI's comment calls `primary` a *persisted* last-read cursor; `unread.ts`
 states the unread state is non-persistent and resets on reload. The code is
@@ -1274,7 +1267,7 @@ on the caller's authenticated member. Never trusted from the request payload."
 - **Not** — Event (the docs' umbrella noun for anything that moves between teammates; the `events` table holds exactly `Message` rows and nothing else) · Ambient event (this message rendered for one agent) · Activity event (the durable observation stream) · Web Push (`POST /push` carries a message; `/push/subscriptions` registers a browser device)
 - **Values** — `level`: `debug` `info` `notice` `warning` `error` `critical` — message severity, six values, exported from the SDK as `LogLevel`. `csuite-core` exports a different four-value `LogLevel` for server logging — `debug` `info` `warn` `error` — that spells the third one `warn`; the type names are identical, `packages/cli/src/runtime/tools.ts` imports from both, and a value legal in one is illegal in the other.
 - **Verbs** — post. One act has five current spellings: wire `push`, CLI `csuite push`, MCP `broadcast` / `send` / `channels_post`, UI "Send".
-- **Decided** — D41: converge the three posting tools on one verb with the scope in the noun — `team_post`, `members_post`, `channels_post` — over recording `broadcast` / `send` / `channels_post` as deliberate agent affordance (2026-09-03). The SDK's grammar arbitrates (D42) and `broadcast` and `send` are the only chat tools with no noun; the scope stays explicit at selection time because it moves into the noun. `objectives_discuss` is a distinct referent — its own endpoint, a computed fan-out, a 16,384-character body cap against `channels_post`'s 65,536 — and keeps its verb.
+- **Decided** — converge the three posting tools on one verb with the scope in the noun — `team_post`, `members_post`, `channels_post` — over recording `broadcast` / `send` / `channels_post` as deliberate agent affordance. The SDK's grammar arbitrates and `broadcast` and `send` are the only chat tools with no noun; the scope stays explicit at selection time because it moves into the noun. `objectives_discuss` is a distinct referent — its own endpoint, a computed fan-out, a 16,384-character body cap against `channels_post`'s 65,536 — and keeps its verb.
 
 ### Addressee
 
@@ -1293,9 +1286,9 @@ fan-out answered. Absent from the wire deliberately; no client ever sees it.
 *(defined in code only)*
 
 - **Names** — core `PushContext.recipients`, `EventLogAppendOptions.recipients`, `ChannelStore.recipientNames()`, and the visibility rule `feedVisibleTo()` · DB `events.recipients` (JSON array or NULL) · docs the "Who sees it" column in [Events and messages](/docs/concepts/events)
-- **Not** — Read access, which is channel membership evaluated at read time, governs `GET /history?channel=<named>` only: it gates on `isMember` now and its SQL ignores `recipients` and the viewer, so a new member reads back the whole pre-join history. `channel=general` is the exception (D5) — general has no membership to gate on, so the recorded audience decides there, exactly as it does in the feed. · Addressee (`to`, one name) · `DeliveryReport.targets` (the count reported back to the sender)
+- **Not** — Read access, which is channel membership evaluated at read time, governs `GET /history?channel=<named>` only: it gates on `isMember` now and its SQL ignores `recipients` and the viewer, so a new member reads back the whole pre-join history. `channel=general` is the exception — general has no membership to gate on, so the recorded audience decides there, exactly as it does in the feed. · Addressee (`to`, one name) · `DeliveryReport.targets` (the count reported back to the sender)
 - **Values** — `null` or omitted: no narrower audience — a DM, or a team-wide broadcast. It does **not** mean "audience unknown". · `[]`: a real audience that happens to be empty, whose message is not team-visible afterward. The two must never collapse.
-- **Decided** — D5: for `?channel=general` the delivery audience is authoritative; for a named channel, read access is (2026-09-08).
+- **Decided** — for `?channel=general` the delivery audience is authoritative; for a named channel, read access is.
 
 ### Default feed
 
@@ -1307,7 +1300,7 @@ instruction notices arrive interleaved. *(defined in code only)*
 
 - **Names** — route `GET /history` with no `channel` and no `with` · core `feedVisibleTo()` — the rule the general-channel read now shares — and `EventLogQueryOptions.viewer`
 - **Not** — `general` (the channel; `GET /history?channel=general` runs `queryGeneralStmt`, which matches `data.thread = 'chan:general'` OR `to_name IS NULL AND data.thread IS NULL` and then applies the same `feedVisibleTo` audience rule this feed uses — the two reads differ in which rows are candidates, not in who may see them) · Inbox (the web UI's computed attention list, not a query) · Delivery audience (the send-time list this read filters against) · Redelivery (the runner's replay of unacknowledged work, which the feed does not carry)
-- **Decided** — D4: the unscoped `recent` is the general channel, not this feed; `GET /history` with no scope is still this feed (2026-09-08).
+- **Decided** — the unscoped `recent` is the general channel, not this feed; `GET /history` with no scope is still this feed.
 
 ### Message delivery
 
@@ -1377,7 +1370,7 @@ Two literals name it today, in two different fields, with no shared constant.
 
 - **Names** — core `PushContext.from = 'csuite'`, and the module-private `SYSTEM_ACTOR = '__system__'` as `created_by` on the seeded general row · DB `events.from_name`, `channels.created_by` · agent-facing `<channel from="csuite" …>`
 - **Not** — `hook:<slug>` in `Message.from` (an external endpoint spoke: "member names can't contain `:`, so the sender identity is collision-free and visibly foreign") · `hook:<slug>` in `data.thread`, which is a thread tag on endpoint-registry chatter and never a sender · Member (a real seat; `NameSchema` permits both `csuite` and `__system__` as member names, and no reserved-name guard exists)
-- **Decided** — D33: one system actor, spelled in the collision-free foreign-identity form `csuite:` that `hook:<slug>` already established, over keeping bare `csuite` in `Message.from` beside `__system__` in the channel store (2026-09-03). This is the identity whose messages carry the most authority in an agent's context and the only one not using the `:` trick the repository invented for exactly this problem. It is wire-visible in text agents read, so it ships behind the one-release alias window the `process_document_*` → `team_process_*` rename set as precedent.
+- **Decided** — one system actor, spelled in the collision-free foreign-identity form `csuite:` that `hook:<slug>` already established, over keeping bare `csuite` in `Message.from` beside `__system__` in the channel store. This is the identity whose messages carry the most authority in an agent's context and the only one not using the `:` trick the repository invented for exactly this problem. It is wire-visible in text agents read, so it ships behind the one-release alias window the `process_document_*` → `team_process_*` rename set as precedent.
 
 ## Observation and capture
 
@@ -1408,7 +1401,7 @@ delivered to live-tail subscribers synchronously after the write commits.
   [Activity and traces](/docs/concepts/activity-and-traces)
 - **Not** — Work state (the momentary roster reading, held in memory and
   forgotten; the wire says `Presence.workState`, `workStateWindowMs` and
-  `POST /presence/work-state` since D6, and emits `Presence.activity`,
+  `POST /presence/work-state`, and emits `Presence.activity`,
   `activityWindowMs` and the `/presence/activity` route beside them for one
   release only) · Activity database (the SQLite
   file holding this table and four more) · Message (the chat row `EventLog`
@@ -1472,9 +1465,9 @@ bare "trace" names four different things.
   `AnthropicMessagesEntry`, whose doc-comment still titles itself "Trace
   capture") · `packages/core/src/trace/` and `packages/cli/src/runtime/trace/`
   (capture-pipeline code, a source namespace and not an entity)
-- **Decided** — D1: the marker window — the `objective_open` → `objective_close`
+- **Decided** — the marker window — the `objective_open` → `objective_close`
   spans carrying that objective id — over the calendar window
-  `[objective.createdAt, completedAt ?? now]` (2026-09-03). Four surfaces already
+  `[objective.createdAt, completedAt ?? now]`. Four surfaces already
   define the marker window and the marker-window code already exists as
   `clipToObjective` / `clipCallsToObjective` in `AgentTimeline.tsx`;
   `TracePanel.tsx` is the lone calendar-window implementation, and because it
@@ -1680,7 +1673,7 @@ bytes being readable.
 - **Names** — core `CaptureHealth`, `CaptureHealthStore.forMember`,
   `CAPTURE_GRACE_MS` (15s) · SDK `CaptureHealthState`, `CaptureHealthStateSchema`
   · route `Presence.captureHealth` on `GET /roster` and `GET /team/status` (one
-  population since D9) · UI `presenceCaptureWarning`,
+  population) · UI `presenceCaptureWarning`,
   badges "NO CAPTURE" and "CAPTURE UNCHECKED", per-turn "not captured"
   *(defined in code only)*
 - **Not** — Diagnostics-store health (`RetentionHealth` = `healthy` / `degraded` /
@@ -1825,19 +1818,18 @@ anything is connected.
   `registerOrGet`, so on a long-lived socket it reads "connected at" despite the
   comment above it claiming it "reflects recent activity")
 - **Verbs** — list (`GET /roster`); register and subscribe bump `lastSeen`
-- **Decided** — D9: `/roster` and `/team/status` owe the same `Presence`, and the
+- **Decided** — `/roster` and `/team/status` owe the same `Presence`, and the
   enrichment is one function both call, over splitting the type into `Presence`
-  and `RosterPresence` (2026-09-08). The split was honest and mechanical; it
+  and `RosterPresence`. The split was honest and mechanical; it
   would have made permanent the one hole that matters most — `/team/status` is
   the operability report, and encoding "this report cannot tell you about capture
   health" into the type system is a decision to keep the hole and give it a name.
   `apps/server/test/presence-shape-parity.test.ts` compares the two objects field
   for field and pins the key set on both.
 
-The glossary's current **Presence** headword — "whether they're connected, and
-whether they're idle, working, or blocked" (`docs/concepts/glossary.mdx:78-79`) —
-merges this entry with **live state** and is superseded by both. Presence is the
-connection axis alone.
+A merged reading — "whether they're connected, and whether they're idle, working, or
+blocked" — is the confound this entry and **live state** replace between them. Presence
+is the connection axis alone.
 
 ### Link state
 
@@ -1895,7 +1887,7 @@ stuck, while a live one keeps its hold alive by heartbeat.
   `needs_input`: waiting on a person for an approval or an answer it cannot
   self-resolve — a person should look
 - **Verbs** — report (runner to broker), get
-- **Decided** — D7: `needs_input` · over keeping `blocked` · 2026-09-03. The
+- **Decided** — `needs_input` · over keeping `blocked`. The
   wire still spells it `blocked`; every human surface already says "NEEDS
   INPUT", so the code catches up with the UI and `ObjectiveStatus.blocked` keeps
   the word.
@@ -1920,31 +1912,32 @@ scheduling telemetry can never make a member look capable.
   input to nothing on the wire) · Proven action (the evidence `working` is
   derived from, published separately as `lastActedAt`) · Executor state (the
   ability to act, not the state of work) · Connection presence
-- **Values** — `working`: proven action within `workStateWindowMs` · `blocked`
-  (D7: `needs_input`): a runner report within the same window · `idle`: neither,
-  and the field is absent
-- **Decided** — D9: one `Presence` shape with one population, over splitting
-  `RosterPresence` out of `Presence` (2026-09-08). See
+- **Values** — `working`: proven action within `workStateWindowMs` · `blocked` (to
+  be renamed `needs_input`): a runner report within the same window · `idle`:
+  neither, and the field is absent
+- **Decided** — one `Presence` shape with one population, over splitting
+  `RosterPresence` out of `Presence`. See
   [Connection presence](#connection-presence).
 
 The field's doc-comment used to describe it as the runner's report, which the code
-has not done since the projection was rewritten; D6 corrected the comment as well
-as the spelling, so it now calls the field "a DERIVATION, not a copy of any
+has not done since the projection was rewritten; the rename corrected the comment as
+well as the spelling, so it now calls the field "a DERIVATION, not a copy of any
 runner's report" (`packages/sdk/src/types.ts:274-286`). The derivation itself is
 `packages/core/src/presence-enrichment.ts:63-78`, and a test pins the behavior
 (`apps/server/test/presence-work-state.test.ts:126-137` — a `working` report
-yields `workState: undefined`). D6 also gave the field the reporter's word: the
-two remain separate concepts, and this entry and **work state** say which is
+yields `workState: undefined`). The rename also gave the field the reporter's word:
+the two remain separate concepts, and this entry and **work state** say which is
 which.
 
 The field is on every route that publishes a `Presence`. `GET /roster` and
 `GET /team/status` both call `enrichPresence`
 (`packages/core/src/presence-enrichment.ts:63`) over the same registry records,
-so the derivation runs once and both projections carry it — D9. What still does
+so the derivation runs once and both projections carry it. What still does
 not *render* it is the client layer: neither `csuite roster` nor the MCP `roster`
 tool draws the state, so an agent deciding who to hand work to reads it only out
-of `team_status`, which needs `members.manage`. That is D8's question, not this
-one. And `workStateWindowMs` publishes `WORK_STATE_TTL_MS`, one constant doing
+of `team_status`, which needs `members.manage`. That is a
+[separate open question](https://github.com/the-efficacious/commandsuite/issues/320),
+not this one. And `workStateWindowMs` publishes `WORK_STATE_TTL_MS`, one constant doing
 two jobs under a third name: the tracker's report expiry and this projection's
 "acted recently" window. Tuning one moves the other.
 
@@ -2110,9 +2103,8 @@ only one the caller sets.
 - One judgement is spelled two ways in one response shape — `stalled` beside
   `staleSignals`, and `stalledReasons: 'objective_stale'`. `stalled` is the user-facing
   stem, and the others should follow it.
-- **Decided** — D44: query parameters are snake_case, over camelCase (2026-09-03);
-  executed `c555f46` (2026-09-08) — `?stalledMs=` is accepted for one release and
-  removed in the next minor
+- **Decided** — query parameters are snake_case, over camelCase; `?stalledMs=` is
+  accepted for one release and removed in the next minor
 
 ## Execution runtime
 
@@ -2463,7 +2455,7 @@ block is omitted rather than descriptor'd, so a packet carries between zero and 
   full inventory of a session's standing text is short by three) ·
   `persistent_context kind="…"` and `context.block.kind` (the "wire and telemetry
   contract" the enum's own doc-comment once gave as the reason the strings are pinned;
-  neither attribute exists anywhere in the tree, and since D23 the pinning is grounded on
+  neither attribute exists anywhere in the tree, and the pinning is grounded on
   the wire that does — see [Context watchdog](#context-watchdog-retired))
 - **Values** — `team_context` · `role_description` · `personal_instructions` ·
   `team_process`
@@ -2580,7 +2572,7 @@ process renders as an explicit line — "unavailable" for a broker that sent no 
   (the retired protocol-v1 name for this bundle; no route, client method, type or event
   kind uses the word — it survives only in scripts, test locals and comments) ·
   [Context watchdog](#context-watchdog-retired) (the broker's former detectors, deleted
-  in PR #185 and, since D23, no longer described anywhere as shipping; the one surviving
+  in PR #185 and no longer described anywhere as shipping; the one surviving
   artifact, `instructionCaptureExemptions`, is a trace-redaction scope)
 
 ### Team process
@@ -2693,9 +2685,8 @@ restarted since their fetch) is not pending — unknown is not a claim"
   notification-endpoint change move the hash and fan out nothing, so those members are
   listed here and never told) · `RestartReason` `'environment'` (a runner-environment
   change, which restarts an agent without any instruction edit)
-- **Decided** — D21: restart-pending means *the composition changed*, over *we told
+- **Decided** — restart-pending means *the composition changed*, over *we told
   them* — the broker derives the list from the hash and never from the fanout
-  (2026-09-03)
 
 ### Instructions-edited event
 
@@ -2744,7 +2735,7 @@ kind is a misnomer. *(defined in code only)*
 The broker's former pair of detectors over captured LLM traffic: an objective-id
 reminder, and an instruction-block presence check that re-sent a missing block as a
 `persistent_context` message tagged with a `context.block.kind` attribute. Both were
-deleted in PR #185 (`c9e4a85`, 2026-08-12) on a measured basis — "97% of the reminder
+deleted in PR #185 on a measured basis — "97% of the reminder
 pushes went to members whose captures the detector could not reliably read … while the
 runner's once-per-session `context_refresh` re-brief never misfired"
 (`CHANGELOG.md:624-629`) — and the retired `context.*` diagnostic causes were swept with
@@ -2755,7 +2746,7 @@ omission: the broker does not police what is in an agent's context. A block that
 out is re-asserted at the next runner start and on codex compaction.
 
 - **Names** — none. Four source comments in `csuite-sdk`, `csuite-core` and `csuite-cli`
-  and one line of `docs/dev/trace-pipeline.mdx` described it as shipped until D23; the
+  and one line of `docs/dev/trace-pipeline.mdx` once described it as shipped; the
   removal is now recorded at `packages/cli/src/runtime/fixed-context.ts:52-59`
 - **Not** — `instructionCaptureExemptions` (which outlived it and is now a redaction
   scope only: it keeps operator-authored prose readable in stored captures,
@@ -2771,8 +2762,8 @@ out is re-asserted at the next runner start and on codex compaction.
   (`packages/core/src/app.ts:1508-1512`) and inside `changed` on the
   `kind: 'instructions'` channel event (`:1026-1028`), both covered by
   `apps/server/test/instructions-versioning.test.ts`
-- **Decided** — D23: excise every description of the watchdog and re-ground the pinning
-  rule on the wire that exists, over reinstating the detectors (2026-09-08)
+- **Decided** — excise every description of the watchdog and re-ground the pinning
+  rule on the wire that exists, over reinstating the detectors
 
 ## Authentication and credentials
 
@@ -2920,11 +2911,11 @@ property of how any caller authenticated.
 - **Verbs** — set, clear. Setting is destructive: the route generates a fresh secret
   on every call, so re-running it rotates and invalidates every authenticator app
   previously bound to that member.
-- **Decided** — D15: rename the act to **authenticator setup**, `csuite totp set`,
+- **Decided** — rename the act to **authenticator setup**, `csuite totp set`,
   keeping `csuite enroll` as a warned alias for one release and `enroll-totp` /
   `EnrollTotpResponse` behind a deprecation window — over leaving the verb alone and
   adding a disambiguating sentence to the glossary, which leaves the highest-severity
-  homonym in this family permanently in the CLI's own help text (2026-09-03)
+  homonym in this family permanently in the CLI's own help text
 
 ### Device enrollment
 
@@ -2943,15 +2934,15 @@ row in `pending_enrollments`, single-use: "a replay always returns `expired_toke
   `/enroll/reject` · CLI `csuite connect`, `csuite connect pending`,
   `csuite connect approve` · MCP `connect_pending`, `connect_approve` ·
   UI "Pending enrollments" · docs [Device enrollment](/docs/enrollment)
-- **Not** — Authenticator setup (`csuite enroll`, the TOTP secret; renamed under
-  D15) · Saved auth entry (what the delivered token becomes on the device; `csuite
+- **Not** — Authenticator setup (`csuite enroll`, the TOTP secret; renamed) ·
+  Saved auth entry (what the delivered token becomes on the device; `csuite
   auth list` calls those rows "enrolled", which is the third unrelated use of the
   word) · Platform registration (the other device flow, pointing the opposite way) ·
   `TokenOrigin: 'enroll'` (a token's provenance, not a row in this table) ·
   `enrolment`, the UK spelling that survives in the MCP tool descriptions, in two
   web-UI strings (the create banner and the unsupported-broker error), in a thrown
   core error, and across `docs/`, `compose.yaml` and `docker/entrypoint.sh` — the
-  same concept, off house style under D34
+  same concept, off house style
 - **Values** — three vocabularies describe one row, and they are not synonyms.
   Stored: `EnrollmentStatus` = `pending` `approved` `rejected`. Approver path:
   `LookupOutcome.kind` = `pending` `expired` `already_approved` `already_rejected`
@@ -3086,8 +3077,8 @@ envelope format itself — `enc-v1:<b64u(iv)>:<b64u(tag)>:<b64u(ct)>`, AES-256-G
 a 12-byte IV and a 16-byte tag. Two byte-compatible implementations exist:
 synchronous over Node crypto in the server, asynchronous over Web Crypto in the
 broker. They are held compatible by intent, not by a shared import — `ENCRYPTED_FIELD_PREFIX`
-is declared in both packages, and D35 makes `csuite-sdk` the single home for wire
-constants, so the duplication is scheduled to collapse rather than a pattern to copy.
+is declared in both packages; `csuite-sdk` is the single home for wire constants, so
+the duplication is scheduled to collapse rather than a pattern to copy.
 *(defined in code only)*
 
 - **Names** — core `FieldCipher`, `GetFieldCipher`, `ENCRYPTED_FIELD_PREFIX`
@@ -3103,7 +3094,8 @@ constants, so the duplication is scheduled to collapse rather than a pattern to 
   secrets. **KEK-optional**: the value is written as plaintext when no key is active —
   authenticator secrets, the issued enrollment token, the VAPID private key. "Fail
   closed" names only the first posture; the boot gate is what keeps the second
-  unreachable in production. Whether the second posture stays is D16, a security
+  unreachable in production. Whether the second posture stays is
+  [open](https://github.com/the-efficacious/commandsuite/issues/323), a security
   question the vocabulary records rather than settles.
 
 ### Platform registration
@@ -3162,10 +3154,10 @@ values.
 - **Verbs** — resolve, refresh (a live change lands at the member's next idle boundary; at
   the next runner start for a runner started with `--no-env-reload` or a broker older than
   `EnvironmentEvent`)
-- **Decided** — D18: adopt "runner environment" (the map) and "environment entry" (a row) as
+- **Decided** — adopt "runner environment" (the map) and "environment entry" (a row) as
   the superordinate, over staying two-entity like the server, which would leave the nav
   label, the `/environment` route prefix, `EnvironmentEvent`, `--no-env-reload` and half the
-  concept prose with no name (2026-09-03)
+  concept prose with no name
 
 ### Environment entry
 
@@ -3313,7 +3305,7 @@ binds itself like anyone else.
   `DELETE /secrets/:slug/bindings/:name`, and the `/variables` and `/tool-sources`
   mirrors · core `bind`, `unbind`, `isBound`, `listBindings` · CLI `csuite secrets bind`,
   `csuite variables unbind`, `csuite tools bind` · MCP `secrets_bindings`,
-  `variables_bindings`, `tool_sources_bindings` — D42 renames all three to
+  `variables_bindings`, `tool_sources_bindings` — all three are renamed to
   `<noun>_bind` / `<noun>_unbind`: `secrets_bind`/`secrets_unbind`,
   `variables_bind`/`variables_unbind`, `tool_sources_bind`/`tool_sources_unbind`, because
   a bare plural noun gives a model scanning `tools/list` no signal that the tool writes · UI "Access" section, "Bind
@@ -3335,12 +3327,11 @@ binds itself like anyone else.
   reaches future members too
 - **Verbs** — bind, unbind (SDK `bindSecret`/`unbindSecret`; the MCP tools take `add` and
   `remove` arrays)
-- **Decided** — D10: "binding" survives for the member↔resource relation across all three
+- **Decided** — "binding" survives for the member↔resource relation across all three
   subjects, verb *bind*/*unbind*, over reserving the word for the custom-tool HTTP shape
   and renaming this relation "grant" — `bind` is in the SDK client's arbitrating verb
   grammar, it dominates the DDL, the stores, the routes, the CLI and the MCP names, and
   "grant" is already the verb for permission leaves and the noun for `fs_grants`
-  (2026-09-03)
 
 ### Resolved runner environment
 
@@ -3362,12 +3353,11 @@ enabled variable that reaches the calling member. The path names one store and r
   only ones the runner registers with the trace redactor. Absent from a broker that predates
   the field, and the runner then registers everything — the fail-closed direction.
 - **Verbs** — resolve, refresh
-- **Decided** — D17: rename the flag to `--no-broker-env`, keeping `--no-secrets` as a
+- **Decided** — rename the flag to `--no-broker-env`, keeping `--no-secrets` as a
   deprecated alias, over keeping the name and fixing only `docs/runners/claude.mdx` and
   `docs/runners/codex.mdx`, and over splitting it into `--no-secrets` and `--no-variables`.
   The flag short-circuits the whole resolve, so today an operator who passes it to debug a
   token also silently loses git identity; only the rename says so at the point of use
-  (2026-09-03)
 
 ### Registered secret value
 
@@ -3463,7 +3453,7 @@ optional headers, body template, content type and result path. Placeholders are
 `{{args.<name>}}`, the URL origin is fixed at save time and re-checked at execute, and
 the credential is injected by the executor — never through a template. The type, the
 column and the MCP argument all still spell it `binding`; that is the legacy spelling,
-and it is the collision D10 resolves.
+and it is the collision the decision below resolves.
 
 - **Names** — SDK `CustomToolBinding`, `SetCustomToolRequest.binding` · DB
   `custom_tools.binding_json` · core `validateBinding`, `expandBinding`,
@@ -3480,11 +3470,10 @@ and it is the collision D10 resolves.
   takes a string (raw text, placeholders interpolated) or a JSON value (structural
   template: a string that is exactly one placeholder passes the arg's raw JSON value
   through, and a missing arg omits the containing key)
-- **Decided** — D10: the member↔resource relation keeps "binding" and this sense becomes
+- **Decided** — the member↔resource relation keeps "binding" and this sense becomes
   the **request template**, over keeping bare `binding` here and renaming that relation
   "grant" — the relation carries the word across three tables, three stores, the routes,
   the CLI and the SDK's `bind` verb, while this sense holds one field on one type
-  (2026-09-03)
 
 ### Custom tool definition
 
@@ -3712,9 +3701,9 @@ inbound: no outbound webhook sender exists anywhere in the tree.
   emit on stdio for `tools/list_changed`) · Ambient event (a broker message rendered into an
   agent's `<channel>` through the runner's `channelSink`) · Notification-endpoint registry
   event (`kind: 'notification_endpoint'`, a config change, not a delivered payload)
-- **Decided** — D26: **external notification** survives, always two words and always
+- **Decided** — **external notification** survives, always two words and always
   documented as inbound, over renaming the product concept to *inbound hook* /
-  *webhook endpoint* and demoting `/notifications/*` to legacy spelling (2026-09-03)
+  *webhook endpoint* and demoting `/notifications/*` to legacy spelling
 
 The plain-English reading of the term is the opposite of the truth, which is why the
 qualifier and the word *inbound* are both mandatory. [Events](/docs/concepts/events) says
@@ -3833,8 +3822,8 @@ anywhere in code, and there is no second entity behind it.
   updated in place) · Message (what a delivery becomes; `messageIds` lists one per member
   target or channel post) · Endpoint (the config; a delivery is one arrival at it)
 - **Verbs** — `list` (newest first; `limit` defaults to 50 and clamps to 500; the page
-  bound is the scalar `before_ts`, epoch-ms — D44's respelling, on the wire as of
-  `c555f46`, with `before` accepted for one release) · `replay`. Retention is a
+  bound is the scalar `before_ts`, epoch-ms — the respelled name, with `before` accepted
+  for one release) · `replay`. Retention is a
   separate bound: `DELIVERY_RETENTION_PER_ENDPOINT` keeps the newest 1000 receipts per
   endpoint. A replay creates a **new** delivery whose `replayOf` points at the source and
   re-runs filters, template and policy; verification, dedupe and rate limiting are skipped. A
@@ -3863,9 +3852,9 @@ a badge per value in the endpoint's Deliveries list.
   `filtered` — a filter rule failed, so nothing reached the targets · `duplicate` — the
   dedupe header matched an earlier delivery · `coalesced` — merged into another delivery's
   message · `failed` — reserved; no code path writes it
-- **Decided** — D25: `delivered` means **acknowledged by a recipient runner**, and `failed`
+- **Decided** — `delivered` means **acknowledged by a recipient runner**, and `failed`
   is **reserved and never emitted**, over the SDK doc comment's "pushed to at least one
-  target" and over wiring the push-failure path to write `failed` (2026-09-03)
+  target" and over wiring the push-failure path to write `failed`
 
 The code is the arbiter here and the doc comments are the thing that is wrong: an
 un-acknowledged but successfully pushed delivery is written `pending`, and the
@@ -4019,9 +4008,8 @@ never enumerated at the root.
   two spellings: `csuite fs put` / `csuite fs get` on the command line, `fs_upload` /
   `fs_download` in the toolbox. They stream bytes past the agent's context rather
   than through it, which is why they stay outside the `create`/`get` verb grammar.
-- **Decided** — D27: record the register pair — code says *namespace*, product prose
+- **Decided** — record the register pair — code says *namespace*, product prose
   says *folder*, one referent — over collapsing both registers onto one word
-  (2026-09-03)
 
 ### Filesystem entry
 
@@ -4281,14 +4269,14 @@ what it just wrote without a second round-trip. *(defined in code only)*
   permission leaf (`members.manage` is one input to the predicate, not the flag) ·
   file share (a share confers read and never write, so an entry a viewer reaches
   only through one carries `canWrite: false`) · `false` — `undefined` means "this
-  server is older than the field", and nothing else. Until D29 it also meant "this
+  server is older than the field", and nothing else. It once also meant "this
   verb does not send it", which a client could not tell apart
 - **Values** — `true` · `false` · absent, only from a server that predates the
   field. On a mutation the value is always `true` today, because every write path
   gates on the same predicate — but it is read from the predicate rather than
   stamped, so a future write path with a different gate reports honestly
-- **Decided** — D29: apply `withCapability` on the write paths, over narrowing the
-  contract to read projections (2026-09-08)
+- **Decided** — apply `withCapability` on the write paths, over narrowing the
+  contract to read projections
 
 ### Filesystem fault code
 
@@ -4360,9 +4348,8 @@ is an error rather than a re-seed.
   serves the team UI in front of it) · bind address (`--host`, `CSUITE_HOST`,
   `RunningServer.host` — an interface this process listens on)
 - **Verbs** — serve
-- **Decided** — D31: keep `Broker` as the class identifier and name its concept
+- **Decided** — keep `Broker` as the class identifier and name its concept
   "presence broker" in prose, over renaming the class to `PresenceBroker`
-  (2026-09-03)
 
 ### Presence broker
 
@@ -4701,8 +4688,8 @@ identity, the `<slug>__<tool>` MCP tool name.
   channel's is itself updatable (`RenameChannelRequestSchema`, `ChannelAuditAction`'s
   `rename`); the REST reference says "Slug is immutable" on each of the other four `PATCH`
   rows
-- **Decided** — D19: one grammar for variable slugs, the strict 32 the secrets store and
-  the wire already enforce, over giving variables their own 64-character schema (2026-09-08)
+- **Decided** — one grammar for variable slugs, the strict 32 the secrets store and
+  the wire already enforce, over giving variables their own 64-character schema
 
 ### Id
 
@@ -4715,7 +4702,7 @@ millisecond — so anything naming a specific event (a correction) uses this."*
   MCP `objectives_view` argument `id` · CLI `csuite notifications replay <deliveryId>`
 - **Not** — Slug (the human-typed, URL-facing identifier, unique per store and not across
   stores) · `identityId` (what survives a member name being reused, not a record's key —
-  and, since D32, a server-internal key rather than a published one) ·
+  and a server-internal key rather than a published one) ·
   Source id (`ActivityEvent.sourceId`, an idempotency key naming a *foreign* record the
   runner read) · the correlation ids `requestId`, `promptId`, `turnId`, `responseId`, which
   name a moment inside one exchange rather than a stored row
@@ -4746,9 +4733,9 @@ is not a name: different grammar, no case folding, and a different uniqueness sc
   [Channels](/docs/concepts/channels) calls a channel's slug its "name" and is the one
   place the two words collide) · Id (opaque and machine-minted) · Identity id
   (`LoadedMember.identityId`, `packages/core/src/members-domain.ts:29` — server-internal,
-  what offboarding keys on when a name is explicitly reused after a departure; D32 removed
-  it from the wire, so the name is the whole public handle and no response distinguishes
-  one occupant of a name from the next) · Role
+  what offboarding keys on when a name is explicitly reused after a departure; it was
+  removed from the wire, so the name is the whole public handle and no response
+  distinguishes one occupant of a name from the next) · Role
   title (a display label, not a handle) · Label (a token's nickname) · Foreign identity
   (`hook:<slug>`, `csuite` — values in a `from` field shaped so they cannot be one of
   these)
@@ -4798,8 +4785,9 @@ boundary: external content never arrives looking like a teammate."*
 - **Not** — Thread tag (`hook:<slug>` and `obj:<id>` again, on `data.thread`, naming a
   conversation) · Format prefix (`enc-v1:`, `sha256:` — an encoding tag on a value, not a
   reference to an entity) · System actor, the one identity in the product that denotes an
-  actor and does *not* use this form, which is what D33 changes · the colon inside enum
-  values such as `'self-signed:fresh'` and `agent:builtin:general-purpose`, which is neither
+  actor and does *not* use this form, which the system-actor rename changes · the colon
+  inside enum values such as `'self-signed:fresh'` and `agent:builtin:general-purpose`,
+  which is neither
 
 ### Format prefix
 
@@ -5029,8 +5017,7 @@ carries the count, and the store keeps the cause and its `since`. Two web-UI sur
 render it — the roster row on Team Home and the member profile — and the only agent-facing
 surface that carries it is the MCP `team_status` tool, which needs `members.manage`, so an
 ordinary agent still cannot read the count about itself, which is what the SDK's "the
-surface an agent reads about ITSELF" asks for and does not get (D45 records the gap;
-register #240 is where it is argued).
+surface an agent reads about ITSELF" asks for and does not get.
 
 - **Names** — SDK `Presence.diagnosticsUnresolved?: number` (`packages/sdk/src/types.ts:336`, doc `:322-335`), schema `diagnosticsUnresolved` (`packages/sdk/src/schemas.ts:301`) · route `GET /roster` and `GET /team/status`, both through `enrichPresence` (`packages/core/src/presence-enrichment.ts:123-129`; path consts `packages/sdk/src/protocol.ts:45,47`) · DB `diagnostic_state` (`cause`, `member_name`, `since`) · core `DiagnosticStore.unresolved()` (`packages/core/src/diagnostics.ts:575`, impl `:1169`) · UI `presenceDiagnostics(p).unresolved` (`packages/web-ui/src/lib/roster.ts:89-97`), badge rendering `3 UNRESOLVED` on the profile (`packages/web-ui/src/components/MemberProfile.tsx:187`) and on the Team Home roster row (`packages/web-ui/src/components/TeamHome.tsx:206`)
 - **Not** — unexpanded permissions (`rawPermissions`, preset names and permission leaves as written on disk before expansion, `packages/core/src/members-domain.ts:31`) · a body the runner could not resolve and "forwarded unresolved" — oversized, not a regular file, or not UTF-8; that is unread, not unhealed, and it is what produces `correlator.body_ref_unreadable` · capture health, which renders beside this on both surfaces as `NO CAPTURE` and `CAPTURE UNCHECKED` (`packages/web-ui/src/components/TeamHome.tsx:197`, `:224`) and answers a different question — whether bodies reach the broker, not whether a recorded failure has healed
@@ -5047,7 +5034,7 @@ say — a write threw, its metadata is unreadable, or unresolved state was evict
 - **Names** — SDK `Presence.diagnosticsRetention?: 'healthy' | 'degraded' | 'unknown'` (`packages/sdk/src/types.ts:344`, doc `:337-343`), schema `diagnosticsRetention` (`packages/sdk/src/schemas.ts:302`) · core `RetentionHealth` (`packages/core/src/diagnostics.ts:285`), `DiagnosticStore.health()` (`:584`, impl `:1404`) · route `GET /roster` and `GET /team/status` (`packages/core/src/presence-enrichment.ts:128`) · DB `diagnostic_meta` keys `overflow_last`, `state_evicted` · UI `presenceDiagnostics(p).retention`, badge rendering `DIAGNOSTICS DEGRADED` / `DIAGNOSTICS UNKNOWN` (`packages/web-ui/src/components/MemberProfile.tsx:195`, `packages/web-ui/src/components/TeamHome.tsx:215`)
 - **Not** — capture health (`captureHealth`, genuinely per member — whether that member's bodies reach the broker — and its good value is `ok`, not `healthy`; `packages/sdk/src/types.ts:46`) · trace retention and `csuite prune-traces` (this reports on neither) · the three other SDK `degraded`s rendered near the same badge row: executor state (`types.ts:397`), a runner-condition frame (`:379`), and a message-disposition reason (`:510`) · the "durable latch" its own cause comment points at — three distinct things wear that word: the in-memory availability latch `writeFailed` (`packages/core/src/diagnostics.ts:948-958`, "IN MEMORY, deliberately"), the `retention.unavailable` bucket row written on the next successful write (`:1133-1149`), and the genuinely durable eviction latch `diagnostic_meta.state_evicted` (`:866-874`)
 - **Values** — `healthy` · `degraded` — evidence is being dropped to satisfy a cap · `unknown` — reachable and load-bearing: "a store that cannot say 'I do not know' would make this signal the thing it exists to prevent, one layer down"
-- **Decided** — D54, **proposed**: broker-wide, a property of the broker repeated on every presence row, over reading `diagnosticsRetention` as a per-member fact; and `degraded` becomes `shedding` with `RetentionHealth` becoming `DiagnosticsStoreHealth`, over keeping "retention health" and a fourth claimant on `degraded` (2026-09-03). The wire, the schema and the badge still spell it `diagnosticsRetention` / `degraded`; those are the legacy spellings until the rename ships.
+- **Decided** — broker-wide, a property of the broker repeated on every presence row, over reading `diagnosticsRetention` as a per-member fact; and `degraded` becomes `shedding` with `RetentionHealth` becoming `DiagnosticsStoreHealth`, over keeping "retention health" and a fourth claimant on `degraded`. The wire, the schema and the badge still spell it `diagnosticsRetention` / `degraded`; those are the legacy spellings until the rename ships.
 
 ### Observed recovery
 
@@ -5097,11 +5084,11 @@ reads it — there is no proxy, no interception, no second copy. A runner may ha
   **rollout** (codex; emits no `sourceId`, so nothing dedups it). Idempotence is a
   property of the source, not of the activity stream.
 - **Verbs** — tail, parse, map to `ActivityEvent`, enqueue on the capture host
-- **Decided** — D43: the Traces page names its two capture sources per runner, over
-  leaving "each agent's own instrumentation" as the whole answer (2026-09-03)
-- **Decided** — D43: capture tier is product vocabulary — the UI renders `capture: 3` to
+- **Decided** — the Traces page names its two capture sources per runner, over
+  leaving "each agent's own instrumentation" as the whole answer
+- **Decided** — capture tier is product vocabulary — the UI renders `capture: 3` to
   an operator with no legend — over keeping it in the contributor standard only; the
-  entry lives in the observation-and-capture family (2026-09-03)
+  entry lives in the observation-and-capture family
 
 ### Session transcript
 
@@ -5124,9 +5111,9 @@ the agent process is swapped under a live capture host.
   conversation transcript": the conversation record the agent writes into, which for a
   codex member is a rollout, not a transcript)
 - **Verbs** — tail, parse, dedup on `sourceId`
-- **Decided** — D55: rename the UI component `Transcript.tsx` to `ThreadView.tsx` —
+- **Decided** — rename the UI component `Transcript.tsx` to `ThreadView.tsx` —
   "Transcript" is never a rendered label, only an identifier — over keeping the name
-  and forbidding bare "transcript" in every capture context (2026-09-03)
+  and forbidding bare "transcript" in every capture context
 
 ### Rollout
 
@@ -5287,9 +5274,9 @@ that offers it. The repository already uses the word this way for a CLI subcomma
 "The internal `csuite mcp-bridge` verb" (`packages/cli/src/index.ts:15`).
 
 - **Names** — CLI `csuite <verb>` · docs [MCP tools](/docs/dev/mcp-tools), [CLI reference](/docs/reference/cli)
-- **Not** — `ServiceVerb` (`'claude' | 'codex' | 'stub'`, which runner installs and restarts its own systemd unit — `csuite <verb> install-service`, `packages/cli/src/commands/install-service.ts:1-3,37`; the CLI's own `USAGE` already writes it `csuite <runner> install-service`, `packages/cli/src/index.ts:82`) · `ContextControlVerb` (`'compact' | 'clear' | 'reload'`, "What a broker-originated context control asks a runner to do", `packages/sdk/src/types.ts:2502,2519`) · Action record (the past-participle name of an operation that already ran)
-- **Values** — the closed cross-surface set is `get` `list` `create` `update` `delete` `set`/`delete` (a write-only value slot) `bind`/`unbind` `post`, plus four verbs that stay outside it because they name distinct operations: `archive` `write` `upload` `download`. Named lifecycle transitions are a per-domain register, not part of the closed set, and each is defined in its own family entry: `complete` `cancel` `reassign` `discuss` (objectives) · `refresh` `invoke` (tool sources) · `replay` (notification deliveries) · `approve` `reject` (enrollment) · `rotate` `revoke` (member tokens) · `resolve` (secrets) · `join` (channels). Each of these has its own route: `reassign`, the one most often described as having none, is `POST /objectives/:id/reassign` (`packages/sdk/src/protocol.ts:135`), reached by `client.reassignObjective` and by `csuite objectives reassign` (`packages/cli/src/commands/objectives.ts:200`)
-- **Decided** — D53: rename the two code uses, `ServiceVerb` → `RunnerCommand` and `ContextControlVerb` → `ContextControlAction`, over having the ontology say "operation" and leave "verb" to the code (2026-09-03). `ContextControlVerb`'s spelling is on the wire (`ContextControlRequest.verb`, `packages/sdk/src/schemas.ts:1899`) and is an MCP input property (`packages/cli/src/runtime/tools.ts:295`), so that half is a protocol change
+- **Not** — `ServiceVerb` (`'claude' | 'codex' | 'stub'`, which runner installs and restarts its own systemd unit — `csuite <verb> install-service`, `packages/cli/src/commands/install-service.ts:1-3,48`; the CLI's own `USAGE` already writes it `csuite <runner> install-service`, `packages/cli/src/index.ts:82`) · `ContextControlVerb` (`'compact' | 'clear' | 'reload'`, "What a broker-originated context control asks a runner to do", `packages/sdk/src/types.ts:2502,2519`) · Action record (the past-participle name of an operation that already ran)
+- **Values** — the closed cross-surface set is `get` `list` `create` `update` `delete` `set`/`delete` (a write-only value slot) `bind`/`unbind` `post`, plus four verbs that stay outside it because they name distinct operations: `archive` `write` `upload` `download`. Named lifecycle transitions are a per-domain register, not part of the closed set, and each is defined in its own family entry: `complete` `cancel` `reassign` `discuss` (objectives) · `refresh` `invoke` (tool sources) · `replay` (notification deliveries) · `approve` `reject` (enrollment) · `rotate` `revoke` (member tokens) · `resolve` (secrets) · `join` (channels). Each of these has its own route: `reassign`, the one most often described as having none, is `POST /objectives/:id/reassign` (`packages/sdk/src/protocol.ts:167`), reached by `client.reassignObjective` and by `csuite objectives reassign` (`packages/cli/src/commands/objectives.ts:200`)
+- **Decided** — rename the two code uses, `ServiceVerb` → `RunnerCommand` and `ContextControlVerb` → `ContextControlAction`, over having the ontology say "operation" and leave "verb" to the code. `ContextControlVerb`'s spelling is on the wire (`ContextControlRequest.verb`, `packages/sdk/src/schemas.ts:1909`) and is an MCP input property (`packages/cli/src/runtime/tools.ts:319`), so that half is a protocol change
 
 ### Post
 
@@ -5300,17 +5287,17 @@ land on the same `POST /push`.
 
 - **Names** — SDK `Client.push()` · route `POST /push` · CLI `csuite push --body <text> (--agent <id> | --broadcast)` · MCP `broadcast`, `send`, `channels_post` · UI "Send" · docs [MCP tools](/docs/dev/mcp-tools)
 - **Not** — Web Push (the browser notification transport: `PATHS.pushVapidPublicKey`, `PATHS.pushSubscriptions`, `packages/sdk/src/protocol.ts:36-37`, UI "Push on this device") · a post (the message the operation produces — `{postCount} posts` on an objective thread; the UI's noun, never its verb) · `objectives_discuss` (a different route, `POST /objectives/:id/discuss`, with a computed thread membership and a 16384-character body cap against `broadcast`'s 65536 — `packages/cli/src/runtime/tools.ts:445`, `:175`) · "Send" as a button label (an affordance word; the operation behind it is post)
-- **Verbs** — post. `push` names the wire call and the browser transport, not the user-facing action; the three MCP scopes converge on `team_post` / `members_post` / `channels_post` under D41, recorded on **Message**, behind D42's alias window (`broadcast` and `send` are the only chat tools with no noun). `objectives_discuss` keeps its own verb.
+- **Verbs** — post. `push` names the wire call and the browser transport, not the user-facing action; the three MCP scopes converge on `team_post` / `members_post` / `channels_post`, recorded on **Message**, behind the alias window (`broadcast` and `send` are the only chat tools with no noun). `objectives_discuss` keeps its own verb.
 
 ### Get
 
 Fetch one record's full detail by its stable key. `view` and `show` are aliases that
-carry no distinct meaning: the SDK, which arbitrates under D42, has no `view*` method
+carry no distinct meaning: the SDK, which arbitrates, has no `view*` method
 anywhere on `Client`.
 
 - **Names** — SDK `getTeam`, `getObjective`, `getChannel`, `getSecret`, `getVariable`, `getToolSource`, `getTeamProcess` · route `GET /objectives/:id`, `GET /secrets/:slug` · CLI `csuite team get`, `csuite secrets view` (alias `show`), `csuite tools show` · MCP `team_get`, `team_process_get`, `objectives_view`, `secrets_view`, `variables_view`, `tool_sources_view`, `notifications_view` · core `get()`, `getBySlug()`
 - **Not** — List (a page of a collection) · Roster (a presence-bearing projection of the member list, defined under Roster — there is no `members_list` tool, so an agent that wants members must know to call `roster`) · `csuite fs get` (streams a file onto the caller's disk — see Upload / download, and the reason the CLI's `get` means two unrelated things)
-- **Verbs** — get. Two MCP tools spell it `_get` and five spell it `_view` on no principle, and the CLI disagrees with itself: `csuite secrets view` works while `csuite tools view` fails, because `show` is the only spelling that command accepts (`packages/cli/src/commands/tools.ts:50`). The grammar's answer is `_get` everywhere; the five `_view` → `_get` renames are **not** in D42's scheduled set, which covers the high-severity names only.
+- **Verbs** — get. Two MCP tools spell it `_get` and five spell it `_view` on no principle, and the CLI disagrees with itself: `csuite secrets view` works while `csuite tools view` fails, because `show` is the only spelling that command accepts (`packages/cli/src/commands/tools.ts:50`). The grammar's answer is `_get` everywhere; the five `_view` → `_get` renames are **not** in the scheduled rename set, which covers the high-severity names only.
 
 ### List
 
@@ -5328,7 +5315,7 @@ Insert a new record under a caller-supplied immutable key. Creation alone binds 
 and stores no value: "Creating a secret stores NO value and binds NOBODY"
 (`packages/cli/src/runtime/tools.ts:1181`). MCP and the CLI split opposite ways — MCP
 says `create` six times and `add` once, the CLI says `create` twice and `add` four times
-— so under D42 `members_add` becomes `members_create`, and `add` survives as a CLI alias.
+— so `members_add` becomes `members_create`, and `add` survives as a CLI alias.
 
 - **Names** — SDK `createMember`, `createObjective`, `createChannel`, `createSecret`, `createVariable`, `createToolSource`, `createNotificationEndpoint`, `createNotificationProfile` · route `POST /members`, `POST /objectives`, `POST /channels` · CLI `csuite member create`, `csuite secrets add` (alias `create`), `csuite tools add`, `csuite variables add`, `csuite notifications add` · MCP `members_add`, `objectives_create`, `secrets_create`, `variables_create`, `tool_sources_create`, `notifications_create`, `notifications_profile_create` · UI "Create member", "Create channel"
 - **Not** — "New" (a UI entry-point label for opening a form — see Affordance word) · Set (writes a value into a record that already exists) · Bind (grants a member access to a record that already exists) · Enrollment (`members_add` creates a member pending device enrollment; the device flow that binds a credential to it is a separate operation)
@@ -5340,7 +5327,7 @@ request change, nothing else does, and no history row is appended. `PATCH` every
 the wire.
 
 - **Names** — SDK `updateTeam`, `updateMember`, `updateObjective`, `updateChannel`, `updateSecret`, `updateVariable`, `updateToolSource`, `updateNotificationEndpoint` · route `PATCH /team`, `PATCH /objectives/:id`, `PATCH /channels/:slug` · CLI `csuite objectives update`, `csuite member update`, `csuite team set` (alias `update`) · MCP `team_update`, `members_update`, `objectives_update`, `secrets_update`, `variables_update`, `tool_sources_update`, `notifications_update` · UI "Save"
-- **Not** — Write (a versioned full-text replacement that appends an edit row) · Set (a write-only value slot; and `TeamStore.setTeam`, "Create or replace the team singleton", against `updateTeam`, "Patch the team singleton; only the supplied fields change" — `packages/core/src/team-store.ts:267,277`, which is why `set` cannot also mean update) · `renameChannel` (the same `PATCH /channels/:slug` as `updateChannel`, whose request type strictly contains it — `packages/sdk/src/types.ts:706-713`) · `csuite tools enable|disable` (a shortcut for `update --enabled`; a field shortcut, not an operation, and the only one of the four registries that has one — whether it stays, spreads or goes is D52) · `complete` / `cancel` / `reassign` (named transitions — `objectives_update` "is for STATE, not conversation … and it never transitions to 'done'; call `objectives_complete` for that", `packages/cli/src/runtime/tools.ts:384-385`)
+- **Not** — Write (a versioned full-text replacement that appends an edit row) · Set (a write-only value slot; and `TeamStore.setTeam`, "Create or replace the team singleton", against `updateTeam`, "Patch the team singleton; only the supplied fields change" — `packages/core/src/team-store.ts:267,277`, which is why `set` cannot also mean update) · `renameChannel` (the same `PATCH /channels/:slug` as `updateChannel`, whose request type strictly contains it — `packages/sdk/src/types.ts:706-713`) · `csuite tools enable|disable` (a shortcut for `update --enabled`; a field shortcut, not an operation, and the only one of the four registries that has one — whether it stays, spreads or goes is [open](https://github.com/the-efficacious/commandsuite/issues/331)) · `complete` / `cancel` / `reassign` (named transitions — `objectives_update` "is for STATE, not conversation … and it never transitions to 'done'; call `objectives_complete` for that", `packages/cli/src/runtime/tools.ts:384-385`)
 - **Verbs** — update. `csuite team set` is the documented CLI spelling today (`update` dispatches as an undocumented alias); the grammar reverses that pairing.
 
 ### Set
@@ -5361,13 +5348,13 @@ process is written this way, and no CLI verb reaches it.
 - **Names** — SDK `writeTeamProcess`, `TeamProcessEdit` · route `PUT /team-process`, `GET /team-process/history` · MCP `team_process_write` · DB `team_process_edits.reason`, `team_process_edits.disposition` · UI "Save" · docs [Team process](/docs/concepts/team-process)
 - **Not** — Update (a partial merge that appends no history row) · `fs_write` (writes inline `text` or `base64` content into a file; the POSIX register inside `fs_*` — see Upload / download) · Set (a write-only value slot) · Message disposition (`MessageDisposition`, a runner's acknowledgement of one delivery — the same word, a different closed set, offered on the same MCP surface an agent holds)
 - **Values** — `disposition` is `AmendmentDisposition`: `correction` (retroactive; the prior text was never validly binding) `scope_change` (forward-only; work already underway is not held to it) — `packages/sdk/src/types.ts:1807`
-- **Verbs** — write. The name is load-bearing: this operation versions, where update merges and records nothing. Whether an operator gets `csuite team-process get|history|write` is D50.
+- **Verbs** — write. The name is load-bearing: this operation versions, where update merges and records nothing. Whether an operator gets `csuite team-process get|history|write` is [open](https://github.com/the-efficacious/commandsuite/issues/330).
 
 ### Delete
 
 Remove a record and cascade what hangs off it — bindings, stored value, credential, tool
 definitions, cache. The same inversion as Create: MCP says `delete` ten times and
-`remove` once, the CLI documents `rm`; under D42 `members_remove` becomes
+`remove` once, the CLI documents `rm`; `members_remove` becomes
 `members_delete` and `rm` / `remove` stay as CLI aliases.
 
 - **Names** — SDK `deleteMember`, `deleteSecret`, `deleteVariable`, `deleteToolSource`, `deleteNotificationEndpoint`, `deleteNotificationProfile`, `deleteCustomTool` · route `DELETE /members/:name`, `DELETE /secrets/:slug` · CLI `csuite member delete` (alias `remove`), `csuite secrets rm` (aliases `remove`, `delete`), `csuite tools rm`, `csuite variables rm`, `csuite notifications rm` · MCP `members_remove`, `secrets_delete`, `variables_delete`, `tool_sources_delete`, `notifications_delete`, `notifications_profile_delete`, `tool_sources_delete_tool` · UI "Delete source", "Delete tool"
@@ -5379,8 +5366,8 @@ Add or drop one row in a resource's bindings table, which decides whether that r
 resolves for that member. These are the verbs; the relation they write is a **grant**.
 
 - **Names** — SDK `bindSecret`/`unbindSecret`, `bindVariable`/`unbindVariable`, `bindToolSource`/`unbindToolSource`, `EnvironmentEvent.action: 'bound' | 'unbound'` · route `POST /secrets/:slug/bindings`, `DELETE /secrets/:slug/bindings/:name` · CLI `csuite secrets bind|unbind`, `csuite variables bind|unbind`, `csuite tools bind|unbind` · MCP `secrets_bindings`, `variables_bindings`, `tool_sources_bindings` · core `bind()`, `unbind()` · DB `tool_source_bindings` · UI "Bind member", "Unbind", section "Access"
-- **Not** — Member binding, the noun (the member↔resource relation these verbs write, which owns the word "binding" under D10) · Request template (the HTTP call a custom tool declares, spelled `CustomToolBinding` / `custom_tools.binding_json` today; `tool_sources_bindings` and `tool_sources_define_tool`'s `binding` argument sit in the same tool group carrying the two senses) · `FilesystemStore.grant()` and the `fs_grants` table (read access to one attached path, granted automatically by a message, never by `bind`) · granting a permission leaf (prose in [Permissions](/docs/concepts/permissions); no `bind` call exists for it) · Create (a source with `allMembers=true` needs no binding at all)
-- **Verbs** — bind / unbind. `secrets_bindings`, `variables_bindings` and `tool_sources_bindings` are the only toolbox names that mutate while reading as a plural noun: they sit beside `_list` and `_view`, and only their descriptions say so — "Grant or revoke members' access to a source" (`packages/cli/src/runtime/tools.ts:936`). Under D42 all three read `<noun>_bind` / `<noun>_unbind`.
+- **Not** — Member binding, the noun (the member↔resource relation these verbs write, which owns the word "binding") · Request template (the HTTP call a custom tool declares, spelled `CustomToolBinding` / `custom_tools.binding_json` today; `tool_sources_bindings` and `tool_sources_define_tool`'s `binding` argument sit in the same tool group carrying the two senses) · `FilesystemStore.grant()` and the `fs_grants` table (read access to one attached path, granted automatically by a message, never by `bind`) · granting a permission leaf (prose in [Permissions](/docs/concepts/permissions); no `bind` call exists for it) · Create (a source with `allMembers=true` needs no binding at all)
+- **Verbs** — bind / unbind. `secrets_bindings`, `variables_bindings` and `tool_sources_bindings` are the only toolbox names that mutate while reading as a plural noun: they sit beside `_list` and `_view`, and only their descriptions say so — "Grant or revoke members' access to a source" (`packages/cli/src/runtime/tools.ts:955`). All three are to read `<noun>_bind` / `<noun>_unbind`.
 
 ### Upload / download
 
@@ -5400,8 +5387,8 @@ one formatter can render an audit trail. *(defined in code only)*
 
 - **Names** — SDK `ObjectiveEventKind`, `ChannelAuditAction`, `EnvironmentEvent.action` · DB `objective_events.kind`, `channel_audit.action`
 - **Not** — Verb (the name of an operation you call; an action record names one that already happened) · `ContextControlVerb` (a request the broker sends, not a record of one that ran; its record is `ContextControlOutcome`)
-- **Values** — `ObjectiveEventKind`: `assigned` `blocked` `unblocked` `completed` `cancelled` `reassigned` `watcher_added` `watcher_removed`, plus `amended` and `event_corrected`, which are "LEGACY READ-ONLY KINDS. No write path produces either" (`packages/sdk/src/types.ts:1788`) · `EnvironmentEvent.action`: `value_set` `bound` `unbound` · `ChannelAuditAction`: `create` `rename` `description` `member_add` `member_remove` `member_role` `archive` — imperative today, and `description` and `member_role` name the field that changed rather than what happened
-- **Decided** — D51: migrate `ChannelAuditAction` to the past participle — `created`, `renamed`, `description_changed`, `member_added`, `member_removed`, `role_changed`, `archived` — over leaving three tenses in one file; the two enums that already agree outnumber the outlier, and `process_document_edits` → `team_process_edits` is the standing precedent for migrating a stored name (`packages/core/src/team-process.ts:147`) (2026-09-03)
+- **Values** — `ObjectiveEventKind`: `assigned` `blocked` `unblocked` `completed` `cancelled` `reassigned` `watcher_added` `watcher_removed`, plus `amended` and `event_corrected`, which are "LEGACY READ-ONLY KINDS. No write path produces either" (`packages/sdk/src/types.ts:1859`) · `EnvironmentEvent.action`: `value_set` `bound` `unbound` · `ChannelAuditAction`: `create` `rename` `description` `member_add` `member_remove` `member_role` `archive` — imperative today, and `description` and `member_role` name the field that changed rather than what happened
+- **Decided** — migrate `ChannelAuditAction` to the past participle — `created`, `renamed`, `description_changed`, `member_added`, `member_removed`, `role_changed`, `archived` — over leaving three tenses in one file; the two enums that already agree outnumber the outlier, and `process_document_edits` → `team_process_edits` is the standing precedent for migrating a stored name (`packages/core/src/team-process.ts:147`)
 
 ### Affordance word
 
@@ -5686,9 +5673,9 @@ code from every entry point.
   half is the one command with no failure code to contract about: it detaches a
   worker and exits `0`, and the worker's code lands in
   `~/.local/var/csuite-cycle.log`
-- **Decided** — D47: fix the code to the published table — startup and environment
+- **Decided** — fix the code to the published table — startup and environment
   failures exit 1 through a distinct carrier and `2` narrows to argv, over widening
-  the doc to say `2` means "usage or startup" (2026-09-08)
+  the doc to say `2` means "usage or startup"
 
 ### Usage error
 
@@ -5730,7 +5717,7 @@ they exit `1` and a supervisor must keep restarting. *(defined in code only)*
   machine · docs [CLI reference](/docs/reference/cli),
   [Headless setup](/docs/headless-setup),
   [Troubleshooting](/docs/troubleshooting)
-- **Not** — Usage error (argv, exit 2; until D47 these three classes were converted
+- **Not** — Usage error (argv, exit 2; these three classes were once converted
   into `UsageError`, so a broker outage reported itself as an operator typo) ·
   Runner condition (a live self-report on a subscription that already started;
   a startup error means the session never started) · Preflight FAIL (the doctor's
@@ -5743,7 +5730,7 @@ A setting the software will not act on, refused loudly instead of being silently
 ignored or quietly reinterpreted. One instance ships: the container entrypoint
 exits `64` when `CSUITE_START_RUNNER=1` names a model runner, because starting
 nothing and starting something else are both worse than saying no. Published in
-the CLI's exit-code table since D47; before that it existed only in
+the CLI's exit-code table; before that it existed only in
 `docker/entrypoint.sh` and the deployment env-var table, so a caller told the
 table was exhaustive read `64` as an unknown crash.
 
@@ -5833,8 +5820,8 @@ accepts each, in `packages/core/test/query-parameter-census.test.ts`.
 - **Values** — one boolean encoding, `true` and `false`. `DELETE /fs/rm?recursive=` is
   the only boolean on the query string and it also accepts `1`, an alias the SDK never
   emits; the sibling `POST /fs/mkdir` takes the same flag as a JSON boolean in the body
-- **Decided** — D44: snake_case query parameters, over camelCase (2026-09-03);
-  executed `c555f46` (2026-09-08), legacy spellings removed in the next minor
+- **Decided** — snake_case query parameters, over camelCase; legacy spellings
+  removed in the next minor
 
 ### Time window
 
@@ -5883,10 +5870,9 @@ on a newest-first walk, `after_ts`/`after_id` on an oldest-first one.
   Within a shared millisecond the order is by `id` — arbitrary where ids are random, but
   total and stable, which is the property a complete page walk needs. `cursor_ts` /
   `cursor_id` are accepted for one release on the three endpoints that had them.
-- **Decided** — D44: split the wire name by direction — `after_ts`/`after_id` on the
+- **Decided** — split the wire name by direction — `after_ts`/`after_id` on the
   oldest-first endpoints, `before_ts`/`before_id` on activity — over keeping one
-  `cursor_ts`/`cursor_id` with an added `order=asc|desc` (2026-09-03); executed
-  `c555f46` (2026-09-08)
+  `cursor_ts`/`cursor_id` with an added `order=asc|desc`
 
 ### `before_ts` (scalar page bound)
 
@@ -5895,7 +5881,7 @@ composite cursor — `ts < before_ts`. Being exclusive on `ts` alone, it drops e
 that shares the page-boundary millisecond with the last row of the page before, so a
 receipts list is a feed to scroll rather than a ledger to enumerate. The name carries
 that arity on purpose: `before_ts` with a `before_id` beside it is a cursor, and
-`before_ts` alone is a bound. `/history` took the same lossy shape until D46 gave it the
+`before_ts` alone is a bound. `/history` took the same lossy shape until it gained the
 composite cursor; it still honors a bare `before_ts` and still loses the tie when you
 send one.
 
@@ -5909,8 +5895,8 @@ send one.
   page) · `ActivityContextControl.tokens.before` (a token count)
 - **Values** — the bare `before` spelling is accepted for one release on both routes and
   answers with `Deprecation: true`; removed in the next minor
-- **Decided** — D46: `/history` gets the composite cursor and the scalar bound keeps the
-  arity suffix (2026-09-08); executed `3f575da`
+- **Decided** — `/history` gets the composite cursor and the scalar bound keeps the
+  arity suffix
 
 ### `ts`
 
@@ -6054,7 +6040,7 @@ required `outcome`), the union is not, and no layer below the documentation name
 
 - **Names** — docs [Give an agent a job](/docs/guides/give-an-agent-a-job) · docs [Jobs gallery](/docs/guides/jobs-gallery) · docs [Why CommandSuite](/docs/why)
 - **Not** — Objective (one discrete unit of assigned work carrying its own required outcome, created by an originator and executed by one assignee; a job holds many over its life and outlives all of them) · Member (the seat — name, role, permissions, credentials — which is who holds a job, not the assignment) · Ticket or queue entry (the guides rule this reading out in their own words: "not job tickets", `docs/guides/multi-agent-team.mdx:181`; "not a job queue for hundreds", `docs/why.mdx:88`) · CI job (a workflow job in the release gate; contributor vocabulary, not product)
-- **Decided** — D48: define Job as a documentation-layer composite with its decomposition stated in the entry, over dissolving it into its four parts (2026-09-03)
+- **Decided** — define Job as a documentation-layer composite with its decomposition stated in the entry, over dissolving it into its four parts
 
 ### Provisioned access
 
@@ -6080,7 +6066,7 @@ the blast radius" (`:162`) — not a second concept.
 
 - **Names** — docs [Give an agent a job](/docs/guides/give-an-agent-a-job) · docs [Run an always-on agent](/docs/guides/always-on-agent) · docs [csuite codex](/docs/runners/codex) · docs [Members](/docs/concepts/members), [Presence](/docs/concepts/presence), [Tool sources](/docs/concepts/tool-sources)
 - **Not** — "Machine" / "the box" (the same referent under two other words, used throughout [Run an always-on agent](/docs/guides/always-on-agent); workstation is canonical) · Device (what `csuite connect` enrolls — the broker stores no device record, only a token carrying a free-text `TokenInfo.label` such as "laptop" or "prod-vm"; one workstation can hold several device tokens, so the two are different cuts) · Runner (the program that runs an agent as a member; several runners can share a workstation) · Broker (the server the workstation connects to, which never sees it)
-- **Decided** — D49: Workstation is a deployment concept, named here as explicitly outside the system, over modeling it as a product entity with an owner and an isolation policy (2026-09-03)
+- **Decided** — Workstation is a deployment concept, named here as explicitly outside the system, over modeling it as a product entity with an owner and an isolation policy
 
 ### The agent's inbox *(retired)*
 

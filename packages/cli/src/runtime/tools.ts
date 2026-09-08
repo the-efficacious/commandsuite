@@ -2275,7 +2275,7 @@ async function handleRoster(
 ): Promise<CallToolResult> {
   const roster = await brokerClient.roster();
   const presenceByName = new Map(roster.connected.map((presence) => [presence.name, presence]));
-  // D6 renamed the field; a broker on either side of the rename is
+  // The field was renamed; a broker on either side of the rename is
   // read here, newest spelling first, so the window is only "unknown"
   // when the broker genuinely predates both.
   const windowMs = roster.workStateWindowMs ?? roster.activityWindowMs;
@@ -2296,8 +2296,8 @@ async function handleRoster(
           : 'offline';
     const executor = presence?.executor;
     // Named for what it holds — the EXECUTOR summary. It was called
-    // `activity`, printed under `executor=`, and was the audit's worst
-    // single instance of the homonym D6 closes.
+    // `activity`, printed under `executor=`, and was the worst single
+    // instance of the homonym the work-state rename closes.
     const executorSummary = executor
       ? `${executor.state}${executor.reason ? `(${executor.reason.code})` : ''}; last-acted=${executor.lastActedAt === null ? 'never' : new Date(executor.lastActedAt).toISOString()}; active-turns=${executor.activeTurns}`
       : `unreported (broker predates executor evidence); compatibility-window=${workStateWindow}`;

@@ -19,8 +19,8 @@ import type { MemberStore } from '../../src/members.js';
  * database. Tests that do go through `seedStores` should prefer the
  * real DB-backed store.
  *
- * There is no preset mutator, because `TeamStore` no longer has one
- * (D11). `permissionPresets` on the seed `Team` still populates
+ * There is no preset mutator, because `TeamStore` no longer has one.
+ * `permissionPresets` on the seed `Team` still populates
  * `getPresets()`: that is the legacy-load path, and a test that wants a
  * preset-era member row supplies the row the old broker would have
  * written rather than writing one through an API that no longer exists.
@@ -88,9 +88,9 @@ export async function seedStores(input: {
     context: input.team.context ?? '',
   });
   // Legacy presets are seeded as the rows a pre-consolidation broker
-  // left on disk. There is no store method to write one any more (D11),
-  // and a fixture that reached for one would be testing an API the
-  // product does not have.
+  // left on disk. There is no store method to write one any more, and a
+  // fixture that reached for one would be testing an API the product
+  // does not have.
   const insertPreset = db.prepare(
     `INSERT INTO permission_presets (name, permissions, updated_at, updated_by)
      VALUES (?, ?, 0, NULL)`,

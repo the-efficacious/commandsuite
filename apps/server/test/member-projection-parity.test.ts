@@ -12,7 +12,7 @@
  * fetch. `Member extends Teammate`: the subtype cannot carry less.
  *
  * `identityId` is absent from both, now by declaration rather than by
- * accident (D32) — no wire type declares it, so these key sets are the
+ * accident — no wire type declares it, so these key sets are the
  * whole story.
  *
  * The assertions are exact key sets and a field-for-field superset

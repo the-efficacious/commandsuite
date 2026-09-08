@@ -112,7 +112,7 @@ export const TeamSchema = z.object({
  */
 export const TeammateSchema = z.object({
   // The name is the whole public handle. The broker's stable internal
-  // identity id is deliberately not projected (D32), so it is not
+  // identity id is deliberately not projected, so it is not
   // declared here either — a parse strips it rather than blessing it.
   name: NameSchema,
   role: RoleSchema,
@@ -266,7 +266,7 @@ export const PresenceSchema = z.object({
   // absence as `idle`); older clients that don't know about it ignore
   // it and fall back to `activity`, then to `busy`.
   workState: WorkStateSchema.optional(),
-  // @deprecated pre-D6 spelling of `workState`, emitted with the same
+  // @deprecated previous spelling of `workState`, emitted with the same
   // value for one release. Removed in the next minor.
   activity: WorkStateSchema.optional(),
   // Compatibility mirror of `workState === 'working'`. Omitted when
@@ -320,7 +320,7 @@ export const WorkStateReportSchema = z.object({
 });
 
 /**
- * @deprecated The pre-D6 name of {@link WorkStateReportSchema}. Same
+ * @deprecated The previous name of {@link WorkStateReportSchema}. Same
  * schema object; removed in the next minor.
  */
 export const ActivityReportSchema = WorkStateReportSchema;
@@ -2124,7 +2124,7 @@ export const RosterResponseSchema = z.object({
   // Optional so clients remain compatible with brokers that predate
   // server-reported work-state-window semantics.
   workStateWindowMs: z.number().int().positive().optional(),
-  // @deprecated pre-D6 spelling of `workStateWindowMs`, emitted with
+  // @deprecated previous spelling of `workStateWindowMs`, emitted with
   // the same value for one release. Removed in the next minor.
   activityWindowMs: z.number().int().positive().optional(),
   // Optional so clients remain compatible with brokers that predate

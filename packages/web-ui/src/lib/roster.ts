@@ -24,9 +24,9 @@ export const roster = signal<RosterResponse | null>(null);
 /**
  * Normalize the roster's projected state of work for a member into the
  * 3-state model. Three spellings are read, newest first, because the
- * D6 compat window has this shell talking to brokers on both sides of
- * the rename: `workState` (canonical), then `activity` (the pre-D6
- * name, removed in the next minor), then the lossy `busy` boolean
+ * work-state compat window has this shell talking to brokers on both
+ * sides of the rename: `workState` (canonical), then `activity` (the
+ * previous name, removed in the next minor), then the lossy `busy` boolean
  * (`busy === working`, which cannot express `blocked`).
  * Absent/undefined presence — the member isn't in `connected` at all —
  * is treated as `idle`. This is the single place the web-shell decides

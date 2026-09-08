@@ -368,8 +368,8 @@ describe('<Sidebar />', () => {
     expect(workingBtn.querySelector('.badge.caution')).toBeNull();
   });
 
-  it('reads workState, then the pre-D6 activity field, then busy — in that order', () => {
-    // The D6 compat window has this shell talking to brokers on both
+  it('reads workState, then the previous activity field, then busy — in that order', () => {
+    // The work-state compat window has this shell talking to brokers on both
     // sides of the rename, so all three spellings have to resolve, and
     // the ORDER has to be right. `blocked` is the value under test in
     // every case because it is the one `busy` cannot express: a reader
@@ -395,7 +395,7 @@ describe('<Sidebar />', () => {
     expect(screen.getByLabelText(/Message build-bot \(needs input\)/i)).toBeTruthy();
     first.unmount();
 
-    // 2. A pre-D6 broker: the old field alone still resolves.
+    // 2. An older broker: the old field alone still resolves.
     roster.value = withPresence({ activity: 'blocked' }) as typeof roster.value;
     const second = render(<Sidebar viewer="director-1" />);
     expect(screen.getByLabelText(/Message build-bot \(needs input\)/i)).toBeTruthy();

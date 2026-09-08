@@ -569,7 +569,7 @@ describe('filesystem streaming transport', () => {
 });
 
 /**
- * D6: the client-side half of the work-state rename.
+ * The client-side half of the work-state rename.
  *
  * The wire compat window lives on the broker — it serves both paths.
  * The CLIENT deliberately does NOT: `setWorkState` and the deprecated

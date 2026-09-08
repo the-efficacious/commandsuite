@@ -2,7 +2,7 @@
  * Work-state-reporter tests.
  *
  * Pins:
- *   - Reports through `Client.setWorkState`, the D6 method that targets
+ *   - Reports through `Client.setWorkState`, the method that targets
  *     `POST /presence/work-state`. The deprecated `setActivity` still
  *     exists on the client for external callers; the runner must not be
  *     one of them, or shipping the rename would leave its own runner

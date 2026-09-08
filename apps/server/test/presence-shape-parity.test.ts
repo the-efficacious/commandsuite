@@ -1,7 +1,7 @@
 /**
  * `GET /roster` and `GET /team/status` owe the SAME `Presence`.
  *
- * Both routes put a value typed `Presence` on the wire. Until D9 they
+ * Both routes put a value typed `Presence` on the wire. They once
  * populated it differently: the roster enriched each registry record
  * with live state, capture health and completeness diagnostics inline in
  * its handler, and `composeTeamStatus` forwarded the registry record

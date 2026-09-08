@@ -476,8 +476,8 @@ function clientSourceKey(c: Context<AppBindings>): string {
 export type AppBindings = AuthBindings;
 
 /**
- * One query parameter that D44/D46 renamed: the name callers should
- * send, and the one still accepted for the compatibility window.
+ * One renamed query parameter: the name callers should send, and the
+ * one still accepted for the compatibility window.
  */
 export interface RenamedQueryParam {
   /** The canonical name. Wins whenever both are present. */
@@ -669,7 +669,7 @@ const API_PATH_PREFIXES = [
   PATHS.enrollApprove,
   PATHS.enrollReject,
   PATHS.presenceWorkState,
-  // The pre-D6 spelling, still routed for one release (D6). Listed
+  // The previous spelling, still routed for one release. Listed
   // beside its successor so an un-upgraded runner's POST 404s as API
   // rather than falling through to the SPA's index.html.
   PATHS.presenceActivity,
@@ -1530,7 +1530,7 @@ export function createApp(options: AppOptions): CreatedApp {
       teammates: teammatesFromMembers(members),
       connected: presences,
       workStateWindowMs: WORK_STATE_TTL_MS,
-      // @deprecated pre-D6 spelling, same value, removed in the next minor.
+      // @deprecated previous spelling, same value, removed in the next minor.
       activityWindowMs: WORK_STATE_TTL_MS,
       restartPending: await restartPendingMembers(),
     });
@@ -1583,7 +1583,7 @@ export function createApp(options: AppOptions): CreatedApp {
    * they post `state: 'idle'` once and drop the entry.
    *
    * Registered at BOTH `PATHS.presenceWorkState` (canonical) and
-   * `PATHS.presenceActivity` (the pre-D6 spelling) for one release, by
+   * `PATHS.presenceActivity` (the previous spelling) for one release, by
    * the same handler, so an un-upgraded runner keeps reporting. The
    * old path additionally answers `Deprecation: true` and a
    * `Link: …; rel="successor-version"` header and logs one line naming
@@ -6909,7 +6909,7 @@ export function composeSessionOnlineMessage(
  * human drawn as an agent.
  *
  * `identityId` is NOT here and is not on `Member` either. It stays
- * server-internal by decision (D32), not by oversight.
+ * server-internal by decision, not by oversight.
  */
 function loadedToMember(m: LoadedMember): Member {
   return {

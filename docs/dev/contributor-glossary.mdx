@@ -11,8 +11,8 @@ This page defines what you meet working **on** CommandSuite. None of it reaches
 a user, an operator or an agent: it lives in `scripts/`, `.github/`,
 `docs/dev/**` and `.github/CONTRIBUTING.md`, and it stays out of the
 [ontology](/docs/concepts/ontology), which defines what the *product* means by
-member, objective, trace and permission. [D39](/docs/dev/ontology-decisions)
-draws that line; this page is one side of it.
+member, objective, trace and permission. That boundary is deliberate; this page
+is one side of it.
 
 Four terms cross the line the other way and are defined on the product side,
 not here, because a user does meet them: **capture tier**, **doctor** /
@@ -283,10 +283,11 @@ is the authority.
 
 The phrase appears nowhere in the tree — the concept has only the field name
 `since` and the variable `windowTag`. That is why it is named here.
-[D38](/docs/dev/ontology-decisions) is open: nothing states whether `since`
-advances at each release tag, and today it names `v0.8.0` while `v0.9.0` and
-`v0.10.0` are shipped, so the next render's "read these" reaches back across two
-signed releases. The window is cumulative until a maintainer says otherwise.
+[Whether the window advances](https://github.com/the-efficacious/commandsuite/issues/329)
+is open: nothing states whether `since` advances at each release tag. It names
+`v0.8.0` while `v0.9.0` and `v0.10.0` are shipped, so the next render's "read
+these" reaches back across two signed releases. The window is cumulative until a
+maintainer says otherwise.
 
 ### Door tripwire
 
@@ -431,8 +432,7 @@ sanctioned path is the release branch **in this repository**, since anyone may
 fork a public repo and name a branch `changeset-release/main`.
 
 **Where** · script `scripts/check-version-bump.mjs` · workflow `Version guard` ·
-required context `Refuse version changes outside the Version PR` (required since
-2026-09-01).
+required context `Refuse version changes outside the Version PR`.
 
 This is the worked example of a gate acquiring authority. It *"ran honestly for
 a month while the platform did not care"* — the workflow did not change; its
@@ -465,10 +465,9 @@ There is no npm script for the release render, so nothing prompts a reader to
 notice that `pnpm release:prepare` is not "preparing a release" in the sense the
 releasing page means.
 
-**Decided ([D37](/docs/dev/ontology-decisions)).** The npm script moves:
-`release:prepare` → **`release:bind`**, and `"release"` becomes
-`pnpm release:bind && changeset publish`. *Rejected:* renaming
-`scripts/release-prepare.mjs` to `release-render.mjs`. — 2026-09-04.
+**Decided.** The npm script moves: `release:prepare` → **`release:bind`**, and
+`"release"` becomes `pnpm release:bind && changeset publish`. *Rejected:*
+renaming `scripts/release-prepare.mjs` to `release-render.mjs`.
 
 **Why this side.** `release:prepare` has seven occurrences in three files —
 two lines of `package.json`, four error strings in `scripts/publish-gate.mjs`,
@@ -569,9 +568,9 @@ against the `admin` column, where `admin` is bootstrap's member holding every
 permission and `builder` is its runner member holding none
 (`scripts/bootstrap.sh:21-22`, `scripts/release-prepare.mjs:357`).
 
-**Call it persona, not role.** The flag is spelled `--role` today and
-[D36](/docs/dev/ontology-decisions) renames it, because `role` is a product
-field with an incompatible meaning: a member's `role` is a **free-text label
+**Call it persona, not role.** The flag is spelled `--role` today and is to be
+renamed, because `role` is a product field with an incompatible meaning: a
+member's `role` is a **free-text label
 that grants nothing**, populated from the member's title, while the route-walk
 value is a closed two-value enum that *is* a permissions statement. A reader who
 learns `role` here will assume the product has an authorization primitive it

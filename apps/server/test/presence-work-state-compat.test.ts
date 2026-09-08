@@ -1,9 +1,9 @@
 /**
- * D6 wire-compat window — `POST /presence/activity` vs
+ * The work-state wire-compat window — `POST /presence/activity` vs
  * `POST /presence/work-state`.
  *
- * D6 finishes the rename PR #194 started in the type layer and
- * deliberately left off the wire. For ONE release the broker serves
+ * The rename PR #194 started in the type layer, and deliberately left
+ * off the wire, is finished here. For ONE release the broker serves
  * both paths from one handler and the roster carries both spellings of
  * every renamed field, so a client on either side of the rename reads
  * the same member. This file is the test that has to fail if that stops
@@ -63,7 +63,7 @@ const TEAM: Team = { name: 'ws-compat', context: '', permissionPresets: {} };
  * `captureHealth` / `diagnosticsUnresolved` / `diagnosticsRetention`
  * and have their own suites).
  *
- * `workState` is canonical; `activity` is the pre-D6 spelling and
+ * `workState` is canonical; `activity` is the previous spelling and
  * `busy` the older boolean mirror. Both deprecated keys leave in the
  * next minor and this list shrinks by two.
  */
@@ -175,7 +175,7 @@ function scoutOf(body: RosterResponse): Presence {
   return scout as Presence;
 }
 
-describe('D6 compat window: /presence/activity and /presence/work-state', () => {
+describe('work-state compat window: /presence/activity and /presence/work-state', () => {
   it('both paths are registered under the SDK constants they claim', () => {
     // The two routes below are addressed by literal string in this
     // file so a change to either constant is caught here rather than

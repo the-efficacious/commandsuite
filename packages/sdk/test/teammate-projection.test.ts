@@ -5,7 +5,7 @@
  * presence of individual fields, because the failure these replace was
  * a field that was declared, schema-accepted and never produced.
  *
- *   1. `identityId` is gone from the wire (D32). It was declared on
+ *   1. `identityId` is gone from the wire. It was declared on
  *      `Teammate`, validated as a UUID by `TeammateSchema`, stored
  *      `NOT NULL UNIQUE` with a backfill migration — and no projection
  *      ever emitted it, so every client that believed the doc comment

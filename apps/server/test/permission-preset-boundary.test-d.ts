@@ -1,6 +1,6 @@
 /**
  * Compile-time negatives for the permission-preset write path
- * (commandsuite#21, #79 — D11).
+ * (commandsuite#21, #79).
  *
  * Presets are read-only compatibility and are never re-opened: rows a
  * pre-consolidation broker wrote, resolved into leaves on every member
