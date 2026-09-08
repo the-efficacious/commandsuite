@@ -3267,7 +3267,7 @@ address.
 ### Environment namespace
 
 The single per-member space of `envName`s that both registries write into. Env names are
-**not** globally unique — that index was dropped on 2026-07-30 so `cora-github-token` and
+**not** globally unique — that index was dropped so `cora-github-token` and
 `rune-github-token` can both target `GITHUB_TOKEN` — and the invariant that replaced it is
 per-member: *"a member's resolved env map can never carry two values for one variable"*
 (`packages/core/src/secrets.ts:25-33`).
