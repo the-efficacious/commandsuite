@@ -25,6 +25,7 @@ import {
   type EventLogTailOptions,
   GENERAL_CHANNEL_ID,
   objectiveThreadTag,
+  SCOPED_UNTHREADED_KINDS,
   SECRET_THREAD_PREFIX,
   THREAD_TAG_PREFIXES,
 } from './event-log.js';
@@ -42,6 +43,16 @@ const SCOPED_THREAD_NOT_LIKE = THREAD_TAG_PREFIXES.filter(
 )
   .map((prefix) => `json_extract(data, '$.thread') NOT LIKE '${prefix}%'`)
   .join('\n                    AND ');
+
+/**
+ * The `IN (...)` list of event kinds that meant recipient-list delivery before
+ * the `recipients` column existed, generated from `SCOPED_UNTHREADED_KINDS` so
+ * this SQL cannot fork from `isLegacyScopedEvent`. Interpolation is safe —
+ * these are module constants, never input.
+ */
+const SCOPED_UNTHREADED_KINDS_SQL = [...SCOPED_UNTHREADED_KINDS]
+  .map((kind) => `'${kind}'`)
+  .join(', ');
 
 interface EventRow {
   id: string;
@@ -164,7 +175,7 @@ export class SqliteEventLog implements EventLog {
                   THEN to_name = ?2
                 ELSE (
                   json_extract(data, '$.kind') IS NULL
-                  OR json_extract(data, '$.kind') NOT IN ('instructions', 'context_control')
+                  OR json_extract(data, '$.kind') NOT IN (${SCOPED_UNTHREADED_KINDS_SQL})
                 )
                 AND (
                   json_extract(data, '$.thread') IS NULL
@@ -201,15 +212,41 @@ export class SqliteEventLog implements EventLog {
     // General channel: include both the explicit-tag variant AND
     // any untagged broadcast (`to_name IS NULL` with no `data.thread`).
     // Mirrors `matchesChannel` in the in-memory log.
+    //
+    // The untagged-broadcast clause is also the shape a recipient-list
+    // push with no thread tag persists as — instruction changes,
+    // context-control commands, runner-environment events. General
+    // membership is implicit, so there is no read access to gate on
+    // and the recorded audience is the only audience such a row has:
+    // the second half of this statement is `feedVisibleTo` again, so
+    // the two reads answer one audience question. Named channels keep
+    // `queryChannelStmt`, which is deliberately audience-blind so a
+    // new member can read back into context.
     this.queryGeneralStmt = this.db.prepare(
       `SELECT id, ts, to_name, from_name, title, body, level, data, attachments, recipients
        FROM events
-       WHERE ts < ?
+       WHERE ts < ?1
          AND (
-           json_extract(data, '$.thread') = ?
+           json_extract(data, '$.thread') = ?2
            OR (to_name IS NULL AND json_extract(data, '$.thread') IS NULL)
          )
-       ORDER BY ts DESC LIMIT ?`,
+         AND (to_name IS NULL OR from_name = ?3 OR to_name = ?3)
+         AND (
+           from_name = ?3
+           OR CASE
+                WHEN recipients IS NOT NULL
+                  THEN EXISTS (
+                    SELECT 1 FROM json_each(events.recipients) WHERE value = ?3
+                  )
+                WHEN to_name IS NOT NULL
+                  THEN to_name = ?3
+                ELSE (
+                  json_extract(data, '$.kind') IS NULL
+                  OR json_extract(data, '$.kind') NOT IN (${SCOPED_UNTHREADED_KINDS_SQL})
+                )
+              END
+         )
+       ORDER BY ts DESC LIMIT ?4`,
     );
     this.objectiveDiscussionStmt = this.db.prepare(
       `SELECT id, ts, to_name, from_name, title, body, level, data, attachments, recipients
@@ -253,9 +290,9 @@ export class SqliteEventLog implements EventLog {
     let rows: EventRow[];
     if (options.channel !== undefined) {
       const tag = channelThreadTag(options.channel);
-      const stmt =
-        options.channel === GENERAL_CHANNEL_ID ? this.queryGeneralStmt : this.queryChannelStmt;
-      rows = stmt.all(before, tag, limit) as unknown as EventRow[];
+      rows = (options.channel === GENERAL_CHANNEL_ID
+        ? this.queryGeneralStmt.all(before, tag, options.viewer, limit)
+        : this.queryChannelStmt.all(before, tag, limit)) as unknown as EventRow[];
     } else if (options.with) {
       rows = this.queryDmStmt.all(
         before,

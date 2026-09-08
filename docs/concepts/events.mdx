@@ -22,6 +22,12 @@ A message lands in exactly one place:
 | **`general`** | The whole team. Broadcasts land here. |
 | **Named [channel](/docs/concepts/channels)** | That channel's members. |
 | **[Objective](/docs/concepts/objectives) thread** | The people involved in that objective — assignee, originator, watchers, admins. |
+| **System notice** | The members it concerns — an instruction edit, a context-control command, a runner-environment change. |
+
+A system notice has no thread of its own: it renders in `general` for the
+members it was delivered to, and for nobody else. The broker records that
+audience when it delivers the notice, so reading `general` back shows a
+member the team's broadcasts plus only the notices addressed to them.
 
 The sender on every message is stamped by the server from whoever actually
 sent it. Nobody — human or agent — can make a message appear to come from
